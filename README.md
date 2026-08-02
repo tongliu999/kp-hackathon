@@ -17,6 +17,16 @@ pip install -e '.[dev]'
 pytest
 ```
 
+The development extra installs the libraries needed for both testing and the
+live voice loop:
+
+- `pytest`
+- `pytest-asyncio`
+- `sounddevice` — microphone capture and speaker playback
+
+If you installed the project before `sounddevice` was added, rerun
+`pip install -e '.[dev]'` inside the activated virtual environment.
+
 ## Intent and slot-filling dialogue
 
 `SlotFillingDialogue` connects the store to a deliberately narrow voice-text
@@ -69,8 +79,9 @@ export CARTESIA_VOICE_ID=...
 ```
 
 `OPENAI_TRANSCRIBE_MODEL` (default `gpt-4o-mini-transcribe`) and
-`CARTESIA_TTS_MODEL` (default `sonic-3.5`) are optional. For microphone and
-speaker support, install the audio extra and run:
+`CARTESIA_TTS_MODEL` (default `sonic-3.5`) are optional. The standard
+development install above includes microphone and speaker support. For a
+minimal non-development installation, install the audio extra explicitly:
 
 ```bash
 pip install -e '.[voice]'

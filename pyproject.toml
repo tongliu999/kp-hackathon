@@ -17,6 +17,9 @@ voice = [
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
+  # Developers exercise the live voice loop, so dev installs include the
+  # microphone/speaker adapter as well as the test tooling.
+  "sounddevice>=0.5,<1",
 ]
 
 [project.scripts]
