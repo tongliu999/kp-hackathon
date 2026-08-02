@@ -27,7 +27,7 @@
       "id": "book",
       "action": "restaurant.book",
       "description": "Place the reservation",
-      "arguments": {"provider": "opentable", "party_size": "{{party_size}}", "cuisine": "{{cuisine}}", "city": "{{city}}", "date": "{{date}}", "time": "{{time}}"},
+      "arguments": {"provider": "resy", "party_size": "{{party_size}}", "cuisine": "{{cuisine}}", "city": "{{city}}", "date": "{{date}}", "time": "{{time}}"},
       "irreversible": true,
       "confirmation_prompt": "Table for {{party_size}}, {{cuisine}}, in {{city}} on {{date}} at {{time}}. Should I confirm?"
     }

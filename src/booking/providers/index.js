@@ -16,12 +16,19 @@
 //     Cancels the booking identified by record.confirmationRef. Must be safe to call with
 //     nothing else going on in the page (resetScript calls this unattended between rehearsals).
 //
-// Selectors in the concrete adapters (opentable.js, resy.js) are a first pass built against
-// each site's public reservation-widget structure using role-based locators, chosen specifically
-// to survive minor markup changes. They have not been run against a live authenticated session —
-// that requires the human login step from TON-8 (real credentials, 2FA/CAPTCHA can't be automated
-// or delegated to an assistant). Smoke-test whichever provider gets chosen against the live box
-// before relying on it for a rehearsal.
+// PROVIDER STATUS (TON-8, verified against the live sites from the booking Sailbox):
+//
+//   resy      — CHOSEN. Selectors read off the live DOM through the box's browser.
+//   opentable — UNUSABLE FROM SAIL. Akamai answers 403 "Access Denied" to its search,
+//               city and restaurant pages from Sail's egress, in a real Chromium with a
+//               real browser fingerprint. Reproduced from three separate Sail IPs
+//               (including a forked box, which gets a different IP), so it is an egress
+//               range block, not one poisoned address. Only /my/profile renders. The
+//               adapter is kept because it is a working reference for the contract, but
+//               it cannot complete a booking from this infrastructure.
+//
+// opentable.js's selectors remain unverified for the same reason — the pages they target
+// cannot be loaded from here.
 
 import * as opentable from "./opentable.js";
 import * as resy from "./resy.js";

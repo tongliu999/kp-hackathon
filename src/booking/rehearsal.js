@@ -37,7 +37,7 @@ export async function runStubRehearsals({
   runs = 3,
   request,
   confirmationResponse,
-  provider = "opentable",
+  provider = "resy",
   params,
   storePath,
   coldVideoPath,

@@ -1,5 +1,13 @@
-// OpenTable adapter — see providers/index.js for the contract and the caveat about
-// selectors being unverified against a live session (blocked on TON-8's human login).
+// OpenTable adapter.
+//
+// NOT USABLE FROM A SAILBOX — see providers/index.js. OpenTable's Akamai edge returns
+// 403 "Access Denied" for /, /s (search), /<city>-restaurants and /r/<venue> from Sail's
+// egress range, verified in a real Chromium from three different Sail IPs. Every page
+// this adapter needs is blocked, so its selectors below are still unverified guesses and
+// cannot be verified from here. TON-8 selected Resy instead.
+//
+// Kept as a reference implementation of the provider contract, and in case the demo ever
+// runs from an egress OpenTable does not block.
 
 const BASE_URL = "https://www.opentable.com";
 

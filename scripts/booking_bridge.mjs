@@ -70,17 +70,74 @@ function toBookingParams(args) {
 /**
  * The live Playwright page for the authenticated Sailbox session (TON-8).
  *
- * This is the ONE place real mode is still unwired, deliberately kept to a
- * single function so TON-8 has an obvious seam to land in. Until then real
- * mode refuses; it never silently degrades to stub, because a stub run that
- * looked real would be the worst thing this bridge could do.
+ * Attaches over CDP to the chromium ALREADY RUNNING in the box -- the same
+ * process the human logged in through at the VNC session, launched with
+ * --user-data-dir=/root/booking/profile.
+ *
+ * Deliberately NOT launchPersistentContext() against that directory: chromium
+ * holds an exclusive lock on its user-data-dir, so a second instance pointed at
+ * the same profile either refuses to start or silently forks a copy of the
+ * profile, and the login appears to have vanished.
+ *
+ * browser.contexts()[0] is the persistent profile's own context. A fresh
+ * browser.newContext() would be incognito -- no cookies, no login -- which is
+ * the failure sail-notes.md warns passes local testing and dies on stage.
  */
+let cdpBrowser = null;
+const openedPages = [];
+
 async function acquirePage() {
-  throw new Error(
-    "no authenticated browser session available: real bookings need the " +
-      "persistent Sailbox page from TON-8. Set BOOKING_STUB_MODE=1 to exercise " +
-      "the full path without contacting a provider."
-  );
+  const endpoint = process.env.BOOKING_CDP_URL;
+  if (!endpoint) {
+    throw new Error(
+      "no authenticated browser session available: BOOKING_CDP_URL is unset. " +
+        "Run `node scripts/vnc-start.mjs` to bring up the booking Sailbox and " +
+        "print its CDP tunnel URL. Set BOOKING_STUB_MODE=1 to exercise the full " +
+        "path without contacting a provider."
+    );
+  }
+
+  if (!cdpBrowser) {
+    const { chromium } = await import("playwright");
+    try {
+      cdpBrowser = await chromium.connectOverCDP(endpoint);
+    } catch (cause) {
+      throw new Error(
+        `could not attach to the Sailbox browser at ${endpoint}: ${cause.message}. ` +
+          "The box may be paused, or the CDP tunnel's IP allowlist may not cover " +
+          "this machine -- re-run `node scripts/vnc-start.mjs`."
+      );
+    }
+  }
+
+  const context = cdpBrowser.contexts()[0];
+  if (!context) {
+    throw new Error(
+      "attached to the Sailbox browser but it exposes no browser context, so " +
+        "there is no profile to book from."
+    );
+  }
+
+  const page = await context.newPage();
+  openedPages.push(page);
+  return page;
+}
+
+/**
+ * Close only the tabs this process opened, and never the browser.
+ *
+ * browser.close() on a CDP attachment tears down the connection rather than
+ * the browser, but leaving tabs behind on every step would pile them up in the
+ * session the human is watching over VNC.
+ */
+async function releaseBrowser() {
+  for (const page of openedPages.splice(0)) {
+    await page.close().catch(() => {});
+  }
+  if (cdpBrowser) {
+    await cdpBrowser.close().catch(() => {});
+    cdpBrowser = null;
+  }
 }
 
 /**
@@ -93,7 +150,7 @@ async function acquirePage() {
  * ones do, which is the only property that makes a stub rehearsal meaningful.
  */
 function resolveProvider(args) {
-  const name = args.provider ?? "opentable";
+  const name = args.provider ?? "resy";
   getProvider(name); // throws with the list of known providers
   return name;
 }
@@ -175,4 +232,8 @@ try {
     }) + "\n"
   );
   process.exitCode = 1;
+} finally {
+  // Runs on the failure path too: a step that threw mid-booking must not leave
+  // its tab open in the session the human is watching.
+  await releaseBrowser();
 }
