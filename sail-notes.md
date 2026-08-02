@@ -154,10 +154,16 @@ the provider.
 
 ## Persistence across a real disconnect — TON-7 [VERIFIED]
 
-Settles the *generic* half of the pause/resume question. Measured against prod with `demo.py`
-(worktree `effervescent-soaring-truffle`): phase 1 boots a box, writes state, sleeps it and
-exits; **phase 2 is a separate OS process** handed nothing but the sailbox id. A handle going
-out of scope inside one process would have proved nothing.
+Settles the *generic* half of the pause/resume question. Measured against prod with
+`src/runbook_voice/sailbox_demo.py`: phase 1 boots a box, writes state, sleeps it and exits;
+**phase 2 is a separate OS process** handed nothing but the sailbox id. A handle going out of
+scope inside one process would have proved nothing.
+
+Lifecycle lives in `src/runbook_voice/sailbox.py` — `boot()` and `connect()`, returning a
+`BoxHandle`. That is the half `executor.py` deliberately omits: its `PersistentSailboxRunner`
+protocol has no create/start method, so replay can never spin up a box between steps. The Sail
+SDK is imported lazily behind the `[sailbox]` extra, so importing `runbook_voice` does not
+require it.
 
 Three things had to hold, and all three did on every run:
 
@@ -192,6 +198,11 @@ never fired here.
 **~400ms of the first boot is one-time SDK transport setup** — boot #1 836ms, then 409 / 442 /
 588 / 527 in the same process. A long-running orchestrator pays that once, so budget **~0.5s
 per box**, not ~1s.
+
+Reproduce with `PYTHONPATH=src .venv/bin/python -m runbook_voice.sailbox_demo` (the repo `.venv`
+has `sail` but not the package itself installed; `pip install -e '.[sailbox]'` gets you the
+`runbook-sailbox-demo` console script instead). `… sailbox_demo check <id>` re-verifies any box
+later, `kill <id>` removes it.
 
 ### What this means for the team
 
