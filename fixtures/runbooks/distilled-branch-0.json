@@ -1,0 +1,80 @@
+{
+  "id": "restaurant-reservation",
+  "name": "Book a restaurant table",
+  "version": "1",
+  "description": "Book a restaurant table for dinner",
+  "utterance_examples": [
+    "book a table for two on friday at seven, somewhere italian"
+  ],
+  "slots": [
+    {
+      "name": "party_size",
+      "type": "integer",
+      "required": true,
+      "description": "the number of people dining",
+      "prompt": "How many people?",
+      "example": "2"
+    },
+    {
+      "name": "cuisine",
+      "type": "string",
+      "required": true,
+      "description": "the kind of food",
+      "prompt": "What kind of food?",
+      "example": "Italian"
+    },
+    {
+      "name": "date",
+      "type": "string",
+      "required": true,
+      "description": "the day of the reservation",
+      "prompt": "What day?",
+      "example": "Friday"
+    },
+    {
+      "name": "time",
+      "type": "string",
+      "required": true,
+      "description": "the reservation time",
+      "prompt": "What time?",
+      "example": "7:00 PM"
+    }
+  ],
+  "steps": [
+    {
+      "id": "search",
+      "action": "restaurant.search",
+      "description": "Find available tables matching the request",
+      "arguments": {
+        "party_size": "{{party_size}}",
+        "cuisine": "{{cuisine}}",
+        "date": "{{date}}",
+        "time": "{{time}}"
+      },
+      "irreversible": false
+    },
+    {
+      "id": "select",
+      "action": "restaurant.select",
+      "description": "Take the best-ranked result offering the requested time",
+      "arguments": {
+        "rank": 1,
+        "time": "{{time}}"
+      },
+      "irreversible": false
+    },
+    {
+      "id": "book",
+      "action": "restaurant.book",
+      "description": "Place the reservation",
+      "arguments": {
+        "party_size": "{{party_size}}",
+        "cuisine": "{{cuisine}}",
+        "date": "{{date}}",
+        "time": "{{time}}"
+      },
+      "irreversible": true,
+      "confirmation_prompt": "Table for {{party_size}} at a {{cuisine}} restaurant on {{date}} at {{time}}. Should I confirm?"
+    }
+  ]
+}
