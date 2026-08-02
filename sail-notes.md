@@ -324,6 +324,51 @@ Two traps that cost real time here, worth knowing for any provider:
 
 Resy serves everything from the same box. That is why TON-8 chose it.
 
+### You may be able to READ a site from a Sailbox and still not be able to LOG IN
+
+The most expensive finding in TON-8, and the least obvious. Bot protection guards
+**auth endpoints** far harder than content, so a provider can look completely
+usable right up until someone tries to sign in.
+
+Measured on Resy, identical request, only the source IP differing:
+
+| request | from the Sailbox | from a residential IP |
+|---|---|---|
+| `OPTIONS /4/auth/mobile` | **500**, no CORS headers | **204** + full `access-control-allow-*` |
+| `OPTIONS /3/auth/password` | **500** | **204** |
+| `OPTIONS /4/find` | 204 | 204 |
+| `GET /` | 302 | 302 |
+
+Reading works. Searching works — the site returns 80 real bookable slots. Only
+`/*/auth/*` is refused, repeatably (3/3), from Imperva's edge.
+
+**In a browser this is invisible.** A 500 carrying no `Access-Control-Allow-Origin`
+is indistinguishable to the browser from a CORS misconfiguration, so the console
+says:
+
+```
+Access to XMLHttpRequest at 'https://api.resy.com/4/auth/mobile' … has been
+blocked by CORS policy: No 'Access-Control-Allow-Origin' header
+```
+
+and the login button simply does nothing — no error, no spinner, nothing on
+screen. It reads exactly like a broken form or bad credentials. Two people burned
+significant time on "the account must be unverified" before the source-IP
+comparison settled it.
+
+**How to diagnose this in one step:** send the *exact* failing request from the
+box and from a non-datacenter IP and compare. Anything else — retrying the login,
+checking the password, re-reading cookies — cannot distinguish the two causes.
+Note also that `x-iinfo` differed consistently (`PNNN` from the box vs `NNNN`
+from residential), which is Imperva classifying the traffic before it ever
+reaches the origin.
+
+**Consequence for any in-box auth plan:** logging in *from* a Sailbox may be
+impossible regardless of credentials. The workaround is to authenticate on a
+residential IP and move the resulting session into the box's profile, which is
+sound here precisely because the *non-auth* endpoints are not blocked. Verify a
+provider's auth endpoint from the box **before** choosing it.
+
 ### The recipe that works — TON-13 branches need this exact setup
 
 ```
