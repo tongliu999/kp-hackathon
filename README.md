@@ -147,3 +147,36 @@ cache miss or overwritten by `save`.
   ]
 }
 ```
+## Asynchronous cold tasks (TON-14)
+
+`ColdTaskCoordinator` handles requests that do not match a learned runbook. It
+speaks “I'll get back to you.” first, assigns an explicit job ID, and starts the
+long worker in a tracked `asyncio` task. The submit call then returns, so the
+conversation can accept unrelated utterances while any number of cold jobs
+remain pending. When a worker finishes, the coordinator proactively sends the
+result through a `VoiceNotifier`.
+
+`SynthesizedVoiceNotifier` connects that callback to the existing
+`Synthesizer` and `AudioOutput` protocols. Both calls are moved off the event
+loop, and voice output is serialized to prevent overlapping speech. A notifier
+could instead place a callback using the same narrow interface.
+
+Jobs expose `pending`, `running`, `succeeded`, `failed`, and `cancelled` states,
+timestamps, result, and error. Cancellation is idempotent; unknown IDs raise
+`JobNotFoundError`; a failed acknowledgement raises `NotificationError` and
+leaves an inspectable failed job. `wait()` is shielded so cancelling an observer
+does not cancel owned work. `close()` rejects new submissions and either
+cancels active work (default) or drains it with `cancel_pending=False`.
+
+The side-effect-free demo uses a configurable fake delay—180 seconds by default
+to model the cold path, but a short value is useful locally:
+
+```bash
+runbook-cold-task-demo --delay 0.2 \
+  "research an unfamiliar task" \
+  "another utterance while that is pending"
+```
+
+This coordinator intentionally performs no bookings or other irreversible side
+effects. A real agent runner can implement `ColdTaskWorker` later while keeping
+the same lifecycle and callback contract.
