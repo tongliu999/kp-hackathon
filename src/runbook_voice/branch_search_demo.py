@@ -20,6 +20,7 @@ import asyncio
 import json
 import secrets
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -31,6 +32,7 @@ from .branch_search import (
     Trajectory,
     resolve_api_key,
 )
+from .costs import run_metrics
 from .judge import DEFAULT_MODEL as DEFAULT_PARENT_MODEL
 from .judge import PairwiseJudge, SailJudgeModel
 from .parent_learning import learn_from_trajectories
@@ -42,6 +44,7 @@ from .parent_planner import (
     validate_branch_limit,
 )
 from .runbook_store import JSONRunbookStore
+from .sailbox_spend import get_sailbox_spend
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "trajectory.schema.json"
 
@@ -170,6 +173,8 @@ async def run_demo(args: argparse.Namespace) -> int:
         return 2
 
     job_id = secrets.token_hex(6)
+    api_key = resolve_api_key()
+    started_at = _rfc3339_now()
     parent_model = SailJudgeModel(model=args.parent_model)
     planner = ParentPlanner(parent_model)
     print(
@@ -195,7 +200,7 @@ async def run_demo(args: argparse.Namespace) -> int:
         output_dir=args.out,
         keep_boxes=args.keep_boxes,
         launcher=InBoxAgentLauncher(
-            api_key=resolve_api_key(),
+            api_key=api_key,
             model=args.model,
             completion_window=args.window,
             max_steps=args.max_steps,
@@ -240,11 +245,27 @@ async def run_demo(args: argparse.Namespace) -> int:
         ),
         flush=True,
     )
+    spend = await asyncio.to_thread(
+        get_sailbox_spend,
+        api_key=api_key,
+        sailbox_ids=search.last_all_boxes,
+        started_at=started_at,
+        ended_at=_rfc3339_now(),
+    )
+    metrics = run_metrics(trajectories, parent_model.metrics, spend)
+    metrics_path = directory / "metrics.json"
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    print("RUN_METRICS " + json.dumps(metrics), flush=True)
     print(
         f"\nOK — parent tried {len(trajectories)} approaches, chose "
-        f"{learned.verdict.winner}, and updated runbook {learned.runbook.id!r}."
+        f"{learned.verdict.winner}, updated runbook {learned.runbook.id!r}, and "
+        f"recorded {metrics['cost_status']} spend metrics."
     )
     return 0
+
+
+def _rfc3339_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

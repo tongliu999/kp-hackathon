@@ -33,6 +33,17 @@ function elapsed(milliseconds) {
   return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 
+function usd(value) {
+  if (!Number.isFinite(value)) return "unavailable";
+  if (value > 0 && value < 0.0001) return "<$0.0001";
+  return `$${value.toFixed(value < 0.01 ? 4 : 2)}`;
+}
+
+function tokens(value) {
+  if (!Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat().format(value);
+}
+
 function branchStatus(branch, run) {
   if (run.winner === branch.branch_id) return "winner";
   if (branch.error || !branch.success_signal) return "stopped";
@@ -63,6 +74,7 @@ function workflowHistory(run) {
     plannedApproaches: run.plan?.approaches ?? [],
     branchLimit: run.branchLimit,
     learning: run.learning,
+    metrics: run.metrics,
   };
 }
 
@@ -233,6 +245,9 @@ function renderBranchCanvas() {
     const metrics = element("span", "branch-metrics");
     metrics.append(element("span", "", `${branch.steps.length} steps`));
     metrics.append(element("span", "", elapsed(branch.wall_ms)));
+    if (Number.isFinite(branch.metrics?.estimated_cost_usd)) {
+      metrics.append(element("span", "", `${usd(branch.metrics.estimated_cost_usd)} model`));
+    }
     metrics.append(element("span", "", `${branch.steps.filter((step) => step.outcome === "error").length} errors`));
     button.append(metrics);
     button.addEventListener("click", () => selectBranch(branch));
@@ -284,12 +299,35 @@ function renderRunSummary() {
   const grid = element("div", "run-metric-grid");
   const totalSteps = selectedRun.branches.reduce((sum, branch) => sum + branch.steps.length, 0);
   const successes = selectedRun.branches.filter((branch) => branch.success_signal).length;
-  for (const [label, value] of [["Branches", selectedRun.branches.length], ["Total steps", totalSteps], ["Success signals", `${successes}/${selectedRun.branches.length}`], ["Winner", selectedRun.winner ?? "—"]]) {
+  const runMetrics = selectedRun.metrics;
+  const totalTokens = runMetrics
+    ? (runMetrics.branch_inference?.input_tokens ?? 0) + (runMetrics.branch_inference?.output_tokens ?? 0)
+      + (runMetrics.parent_inference?.input_tokens ?? 0) + (runMetrics.parent_inference?.output_tokens ?? 0)
+    : null;
+  const displayCost = runMetrics?.total_cost_usd ?? runMetrics?.known_cost_usd;
+  const cards = [["Branches", selectedRun.branches.length], ["Total steps", totalSteps], ["Success signals", `${successes}/${selectedRun.branches.length}`], ["Winner", selectedRun.winner ?? "—"]];
+  if (runMetrics) cards.push([runMetrics.total_cost_usd == null ? "Known spend" : "Total spend", usd(displayCost)], ["Model tokens", tokens(totalTokens)]);
+  for (const [label, value] of cards) {
     const card = element("div", "run-metric");
     card.append(element("span", "", label), element("strong", "", String(value)));
     grid.append(card);
   }
   inspector.append(grid);
+  if (runMetrics) {
+    const economics = element("section", "inspector-section economics-summary");
+    economics.append(element("h3", "", "Money spent"));
+    economics.append(detailRow("Branch inference", usd(runMetrics.branch_inference?.estimated_cost_usd)));
+    economics.append(detailRow("Parent planning + judging", usd(runMetrics.parent_inference?.estimated_cost_usd)));
+    economics.append(detailRow("Sailbox infrastructure", usd(runMetrics.sailboxes?.total_cost_usd)));
+    economics.append(detailRow(
+      runMetrics.total_cost_usd == null ? "Known subtotal" : "Run total",
+      `${usd(displayCost)} · ${runMetrics.cost_status}`
+    ));
+    economics.append(element("p", "cost-note", runMetrics.total_cost_usd == null
+      ? "This is partial because at least one billing component was unavailable."
+      : "Token charges use Sail’s published price card; Sailbox spend comes from the usage API. Active usage may still be estimated."));
+    inspector.append(economics);
+  }
   const section = element("section", "inspector-section");
   section.append(element("h3", "", "Branch approaches"));
   selectedRun.branches.forEach((branch) => {
@@ -363,7 +401,11 @@ function renderTraceInspector(branch) {
   inspector.append(auditSection("Files changed", "No structured file mutations were emitted by this trajectory."));
   inspector.append(auditSection("Emails sent", "None. Branches are read-only and cannot send external messages.", "safe"));
   inspector.append(auditSection("Conversations", "No external conversations were recorded."));
-  inspector.append(auditSection("Money spent", "Not emitted by the current trajectory schema. Sail/model usage remains visible in provider billing."));
+  const modelMetrics = branch.metrics;
+  const money = modelMetrics
+    ? `${usd(modelMetrics.estimated_cost_usd)} estimated model cost · ${tokens(modelMetrics.input_tokens)} input + ${tokens(modelMetrics.output_tokens)} output tokens across ${modelMetrics.model_calls} calls. Sailbox infrastructure is reported at the run level.`
+    : "This older trajectory predates structured spend metrics.";
+  inspector.append(auditSection("Money spent", money, modelMetrics?.estimated_cost_usd != null ? "safe" : "warning"));
   inspector.append(auditSection("Metrics achieved", `${branch.steps.length} recorded steps · ${elapsed(branch.wall_ms)} wall time · success signal ${branch.success_signal ? "true" : "false"}.`, branch.success_signal ? "safe" : "warning"));
   inspector.append(auditSection("Lessons learned", branch.final_answer ?? branch.error ?? "No final answer was recorded."));
 

@@ -50,7 +50,7 @@ DEFAULT_SHELL_TIMEOUT = 60.0
 DEFAULT_REQUEST_TIMEOUT = 300.0
 
 SYSTEM_PROMPT = """\
-You are one of three independent agents racing to work out how to do an unfamiliar \
+You are one of several independent agents racing to work out how to do an unfamiliar \
 task. You each have your own Linux box and your own assigned approach. Another \
 system will later compare your attempts, so your job is to make YOUR approach \
 work — not to hedge toward what the others might do.
@@ -335,6 +335,46 @@ def _arguments(call: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _usage(reply: dict[str, Any]) -> tuple[int, int, int]:
+    """Normalize OpenAI-style token usage, including optional cached input."""
+    usage = reply.get("usage") or {}
+    input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+    output_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+    details = usage.get("prompt_tokens_details") or {}
+    cached = int(details.get("cached_tokens", usage.get("cached_input_tokens", 0)) or 0)
+    return input_tokens, output_tokens, cached
+
+
+def _model_metrics(
+    job: dict[str, Any], calls: int, inputs: int, outputs: int, cached: int
+) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "model": job.get("model", DEFAULT_MODEL),
+        "completion_window": job.get("completion_window", DEFAULT_COMPLETION_WINDOW),
+        "model_calls": calls,
+        "input_tokens": inputs,
+        "cached_input_tokens": cached,
+        "output_tokens": outputs,
+    }
+    pricing = job.get("pricing") or {}
+    if pricing and not (calls > 0 and inputs == 0 and outputs == 0):
+        uncached = max(0, inputs - cached)
+        cost = (
+            uncached * float(pricing["input_usd_per_million"])
+            + cached * float(pricing["cached_input_usd_per_million"])
+            + outputs * float(pricing["output_usd_per_million"])
+        ) / 1_000_000
+        metrics.update(
+            estimated_cost_usd=round(cost, 9),
+            cost_status="estimated",
+            pricing_source=pricing["source"],
+            pricing_as_of=pricing["as_of"],
+        )
+    else:
+        metrics["cost_status"] = "unavailable"
+    return metrics
+
+
 def run_branch(
     job: dict[str, Any],
     *,
@@ -373,6 +413,7 @@ def run_branch(
     final_answer: str | None = None
     success_signal = False
     error: str | None = None
+    model_calls = input_tokens = output_tokens = cached_input_tokens = 0
 
     while len(recorder.steps) < max_steps:
         if recorder.elapsed > deadline_seconds:
@@ -397,6 +438,12 @@ def run_branch(
                 observation=error,
             )
             break
+
+        model_calls += 1
+        used_input, used_output, used_cached = _usage(reply)
+        input_tokens += used_input
+        output_tokens += used_output
+        cached_input_tokens += used_cached
 
         message = ((reply.get("choices") or [{}])[0].get("message")) or {}
         calls = _tool_calls(message)
@@ -491,6 +538,9 @@ def run_branch(
         "steps": recorder.steps,
         "success_signal": success_signal,
         "wall_ms": int(recorder.elapsed * 1000),
+        "metrics": _model_metrics(
+            job, model_calls, input_tokens, output_tokens, cached_input_tokens
+        ),
     }
     if final_answer:
         trajectory["final_answer"] = final_answer

@@ -36,8 +36,11 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 import tomllib
 
+from .costs import inference_metrics
+
 SAIL_BASE_URL = "https://api.sailresearch.com"
 DEFAULT_MODEL = "moonshotai/Kimi-K2.6"
+DEFAULT_COMPLETION_WINDOW = "priority"
 
 # The reason is the instrument you use to catch a judge that is coin-flipping, so an
 # empty one makes the verdict unreadable even when the winner happens to be right.
@@ -195,12 +198,17 @@ class SailJudgeModel:
         effort: str = "high",
         temperature: float = 0.0,
         max_tokens: int = 8192,
+        completion_window: str = DEFAULT_COMPLETION_WINDOW,
         client: Any | None = None,
     ) -> None:
         self._model = model
         self._effort = effort
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._completion_window = completion_window
+        self._model_calls = 0
+        self._input_tokens = 0
+        self._output_tokens = 0
         self._client = client or _anthropic_client(
             api_key or sail_api_key(), base_url
         )
@@ -221,10 +229,16 @@ class SailJudgeModel:
                     },
                     "effort": self._effort,
                 },
+                metadata={"completion_window": self._completion_window},
                 messages=[{"role": "user", "content": prompt}],
             )
         except Exception as exc:
             raise JudgeError(f"judge model call failed: {_detail(exc)}") from exc
+
+        self._model_calls += 1
+        usage = getattr(response, "usage", None)
+        self._input_tokens += _usage_value(usage, "input_tokens")
+        self._output_tokens += _usage_value(usage, "output_tokens")
 
         if getattr(response, "stop_reason", None) == "refusal":
             raise JudgeError("judge model refused the comparison")
@@ -235,6 +249,26 @@ class SailJudgeModel:
         if not text:
             raise JudgeError("judge model returned no text content")
         return text
+
+    @property
+    def metrics(self) -> dict[str, Any]:
+        return inference_metrics(
+            model=self._model,
+            completion_window=self._completion_window,
+            model_calls=self._model_calls,
+            input_tokens=self._input_tokens,
+            output_tokens=self._output_tokens,
+        )
+
+
+def _usage_value(usage: Any, name: str) -> int:
+    if usage is None:
+        return 0
+    if isinstance(usage, Mapping):
+        value = usage.get(name, 0)
+    else:
+        value = getattr(usage, name, 0)
+    return int(value or 0)
 
 
 def sail_api_key() -> str:

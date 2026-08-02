@@ -359,6 +359,15 @@ through `Runbook.from_dict`, and saves it in the durable `JSONRunbookStore`.
 console. If judgment, distillation, or schema validation fails, the store is not
 updated; the parent never learns a fabricated or invalid procedure.
 
+Every completed adaptive run also writes `metrics.json`. Branch trajectories retain
+measured model calls and input/output token counts, while the run summary combines
+branch inference, parent planning/judging inference, and observed Sailbox spend. Model
+dollars are explicitly marked as estimates derived from Sail's
+[published inference pricing](https://docs.sailresearch.com/pricing); infrastructure
+cost comes from Sail's [Sailbox spend endpoint](https://docs.sailresearch.com/api-reference/usage/get-sailbox-spend).
+If billing access or a model price is unavailable, the console shows a known subtotal
+as **partial** instead of inventing a total.
+
 ## Pairwise judge (TON-19)
 
 `PairwiseJudge` takes the trajectories a fan-out produced and names a winner in one

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from . import branch_agent
+from .costs import pricing_payload
 from .sailbox import SailboxError, boot
 
 DEFAULT_APP = "branch-search"
@@ -163,6 +164,7 @@ class Trajectory:
     wall_ms: int
     final_answer: str | None = None
     error: str | None = None
+    metrics: Mapping[str, Any] | None = None
     sailbox_id: str | None = field(default=None, compare=False)
 
     @classmethod
@@ -176,6 +178,7 @@ class Trajectory:
             wall_ms=int(data["wall_ms"]),
             final_answer=data.get("final_answer"),
             error=data.get("error"),
+            metrics=data.get("metrics"),
             sailbox_id=sailbox_id,
         )
 
@@ -192,6 +195,8 @@ class Trajectory:
         trajectory["wall_ms"] = self.wall_ms
         if self.error:
             trajectory["error"] = self.error
+        if self.metrics:
+            trajectory["metrics"] = dict(self.metrics)
         return trajectory
 
     @property
@@ -236,6 +241,9 @@ class InBoxAgentLauncher:
             "max_steps": self.max_steps,
             "deadline_seconds": self.deadline_seconds,
         }
+        pricing = pricing_payload(self.model, self.completion_window)
+        if pricing:
+            job["pricing"] = pricing
         await asyncio.to_thread(
             box.fs.write, f"{BRANCH_DIR}/{branch_agent.JOB_FILE}", json.dumps(job)
         )
@@ -380,6 +388,7 @@ class BranchingSearch:
         self._keep_boxes = keep_boxes
         self._progress = progress or (lambda _message: None)
         self.last_boxes: tuple[str | None, ...] = ()
+        self.last_all_boxes: tuple[str, ...] = ()
 
     @property
     def angles(self) -> tuple[Angle, ...]:
@@ -421,6 +430,11 @@ class BranchingSearch:
                 [f"branch-{angle.branch_id}-{job_id[:8]}" for angle in self._angles],
             )
             self.last_boxes = tuple(_box_id(child) for child in children)
+            self.last_all_boxes = tuple(
+                identifier
+                for identifier in (_box_id(base_handle.box), *self.last_boxes)
+                if identifier
+            )
             self._progress(
                 f"checkpoint fan-out: {len(children)} children in "
                 f"{time.monotonic() - started:.1f}s "

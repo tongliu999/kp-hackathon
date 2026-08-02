@@ -53,9 +53,10 @@ class Block:
 
 
 class Response:
-    def __init__(self, content, stop_reason: str = "end_turn") -> None:
+    def __init__(self, content, stop_reason: str = "end_turn", usage=None) -> None:
         self.content = content
         self.stop_reason = stop_reason
+        self.usage = usage
 
 
 class FakeMessages:
@@ -237,18 +238,23 @@ def test_fallback_gets_the_recorded_fixtures_wrong() -> None:
 
 
 def test_sail_model_sends_the_schema_and_returns_the_text() -> None:
-    client = FakeAnthropic(Response([Block('{"winner": "b0", "reason": "r"}')]))
-    model = SailJudgeModel(client=client, model="test/model")
+    client = FakeAnthropic(Response([Block('{"winner": "b0", "reason": "r"}')], usage={"input_tokens": 1000, "output_tokens": 50}))
+    model = SailJudgeModel(client=client, model="moonshotai/Kimi-K2.6")
 
     result = model.compare(system="sys", prompt="prompt", schema={"type": "object"})
 
     assert result == '{"winner": "b0", "reason": "r"}'
     sent = client.messages.kwargs
-    assert sent["model"] == "test/model"
+    assert sent["model"] == "moonshotai/Kimi-K2.6"
     assert sent["system"] == "sys"
     assert sent["temperature"] == 0.0, "a pruning judge must not be stochastic"
     assert sent["output_config"]["format"]["schema"] == {"type": "object"}
     assert sent["output_config"]["format"]["strict"] is True
+    assert sent["metadata"]["completion_window"] == "priority"
+    assert model.metrics["model_calls"] == 1
+    assert model.metrics["input_tokens"] == 1000
+    assert model.metrics["output_tokens"] == 50
+    assert model.metrics["estimated_cost_usd"] == 0.0006
 
 
 def test_sail_model_reports_a_refusal_rather_than_returning_empty() -> None:

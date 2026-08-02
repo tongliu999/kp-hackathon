@@ -86,6 +86,7 @@ async function readTrajectoryDirectory(directory, source) {
 
   let winner = null;
   let learning = null;
+  let metrics = null;
   try {
     const payload = JSON.parse(await readFile(path.join(directory, "learning.json"), "utf8"));
     if (payload && typeof payload === "object" && typeof payload.winner === "string") {
@@ -94,6 +95,12 @@ async function readTrajectoryDirectory(directory, source) {
     }
   } catch {
     // Older and interrupted runs may not have reached the learning stage.
+  }
+  try {
+    const payload = JSON.parse(await readFile(path.join(directory, "metrics.json"), "utf8"));
+    if (payload && typeof payload === "object") metrics = payload;
+  } catch {
+    // Metrics were introduced after the first recorded trajectories.
   }
   try {
     const judgeLog = await readFile(path.join(directory, "judge.log"), "utf8");
@@ -112,6 +119,7 @@ async function readTrajectoryDirectory(directory, source) {
     createdAt: info.mtime.toISOString(),
     winner,
     learning,
+    metrics,
     branches,
     directory,
   };
@@ -163,6 +171,7 @@ async function listHistory() {
       expectedBranches: run.plannedBranches,
       plannedApproaches: run.plan?.approaches ?? [],
       branchLimit: run.branchLimit,
+      metrics: run.metrics,
     }));
   return [...activeRecords, ...savedRecords]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -265,6 +274,7 @@ function publicRun(run) {
     plan: run.plan,
     parentPhase: run.parentPhase,
     learning: run.learning,
+    metrics: run.metrics,
   };
 }
 
@@ -294,6 +304,15 @@ function appendOutput(run, chunk) {
   } else if (run.output.includes("parent judging complete trajectories")) {
     run.parentPhase = "judging and learning";
   }
+  const metricsMatch = run.output.match(/RUN_METRICS\s+(\{[^\n]+\})/);
+  if (metricsMatch) {
+    try {
+      run.metrics = JSON.parse(metricsMatch[1]);
+      run.parentPhase = "spend measured";
+    } catch {
+      // The next output chunk retries parsing.
+    }
+  }
 }
 
 function startRun(task, input) {
@@ -316,6 +335,7 @@ function startRun(task, input) {
     plan: null,
     parentPhase: task === "fanout" ? "planning approaches" : null,
     learning: null,
+    metrics: null,
     label: spec.label,
     status: "running",
     output: `[console] Starting ${spec.label}…\n`,

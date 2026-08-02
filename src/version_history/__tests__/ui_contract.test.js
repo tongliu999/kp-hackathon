@@ -35,6 +35,8 @@ test("inspector renders every requested audit category", () => {
   }
   assert.match(app, /traceStep/);
   assert.match(app, /Raw trajectory JSON/);
+  assert.match(app, /estimated model cost/);
+  assert.match(app, /Sailbox infrastructure/);
   assert.match(app, /\/api\/history/);
   assert.match(app, /\/api\/runs/);
   assert.match(app, /data-task/);
@@ -47,6 +49,8 @@ test("fan-out prompts appear live in history before trajectories finish", () => 
   assert.match(server, /plannedApproaches: run\.plan\?\.approaches/);
   assert.match(server, /PARENT_PLAN/);
   assert.match(server, /PARENT_LEARNED/);
+  assert.match(server, /RUN_METRICS/);
+  assert.match(server, /metrics\.json/);
   assert.match(app, /upsertWorkflowHistory/);
   assert.match(app, /activeWorkflow\.workflowId/);
   assert.match(app, /parent choosing up to/);

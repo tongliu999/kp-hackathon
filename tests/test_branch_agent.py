@@ -29,8 +29,8 @@ JOB = {
 }
 
 
-def tool_reply(name: str, arguments: dict[str, Any], content: str = "") -> dict[str, Any]:
-    return {
+def tool_reply(name: str, arguments: dict[str, Any], content: str = "", usage=None) -> dict[str, Any]:
+    reply = {
         "choices": [
             {
                 "message": {
@@ -46,6 +46,9 @@ def tool_reply(name: str, arguments: dict[str, Any], content: str = "") -> dict[
             }
         ]
     }
+    if usage is not None:
+        reply["usage"] = usage
+    return reply
 
 
 def text_reply(content: str) -> dict[str, Any]:
@@ -111,6 +114,27 @@ def test_a_finished_branch_records_every_step_it_took() -> None:
     # nothing for the distiller to turn into a runbook.
     assert trajectory["steps"][1]["observation_excerpt"].startswith("14 results")
     assert trajectory["steps"][1]["url"] == "https://example.test/search"
+
+
+def test_branch_records_token_usage_and_estimated_model_cost() -> None:
+    pricing = {
+        "input_usd_per_million": 0.70,
+        "cached_input_usd_per_million": 0.18,
+        "output_usd_per_million": 3.00,
+        "source": "https://docs.sailresearch.com/pricing",
+        "as_of": "2026-08-02",
+    }
+    transport = ScriptedTransport(
+        tool_reply("note", {"thought": "look"}, usage={"prompt_tokens": 1000, "completion_tokens": 100}),
+        tool_reply("finish", {"final_answer": "done", "success_signal": True}, usage={"prompt_tokens": 1500, "completion_tokens": 200}),
+    )
+
+    trajectory = run_branch({**JOB, "pricing": pricing}, transport=transport, recorder=recorder())
+
+    assert trajectory["metrics"]["model_calls"] == 2
+    assert trajectory["metrics"]["input_tokens"] == 2500
+    assert trajectory["metrics"]["output_tokens"] == 300
+    assert trajectory["metrics"]["estimated_cost_usd"] == 0.00265
 
 
 def test_step_times_never_go_backwards() -> None:
