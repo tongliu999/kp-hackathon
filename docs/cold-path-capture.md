@@ -31,6 +31,42 @@ served from the synthesized runbook in **0.1s** — retrieved by the matcher and
 replayed through the real executor and confirm gate. Booking is stubbed only
 because TON-8's provider login is still outstanding.
 
+## The cold path is probabilistic. Budget for retakes.
+
+Three runs of the identical request:
+
+| take | job | cold wall | branches succeeding | notes |
+|---|---|---|---|---|
+| 1 | `6afd7d775249` | **4.4 min** | 2/3 | clean; used for the numbers below |
+| 2 | `d55f84f4d1e3` | 2.7 min | **0/3** | unusable — no runbook can be distilled |
+| 3 | `ae955d6198dd` | 8.6 min | 2/3 | `--max-steps 18`; b0 burned 513s on a hung TLS handshake |
+
+**Take 2 produced nothing.** All three branches spent their budget on OpenTable,
+which is blocked from Sail (TON-8), and none had steps left to pivot to Resy.
+Nothing in the code names OpenTable — the angles say "the one service most
+people would use", and the model reaches for it.
+
+Two mechanisms, both worth knowing before recording:
+
+- **The step budget is the binding constraint.** The default is 12. Take 2's b1
+  and b2 used all 12 and failed; take 3's winners needed **18 and 17**. The
+  OpenTable dead end eats the budget, and whether a branch has enough left to
+  pivot is luck. `--max-steps 18` makes success much likelier and costs nothing
+  when branches finish early.
+- **b0 is structurally doomed while OpenTable is blocked.** Its directive is
+  "go directly to the one service most people would use ... do not survey
+  alternatives", so it cannot pivot by design. It failed in all three takes.
+  That is not a bug — one branch exploring a path that dead-ends is what
+  branching is *for*, and the judge correctly ranked it last every time. But do
+  not expect 3/3.
+- **The block inflates wall time.** OpenTable's edge drops the connection
+  silently rather than refusing it, so a branch pays a full TLS timeout per
+  attempt. That is why take 3 ran 8.6 minutes: b0 spent 513s hanging.
+
+So: record with `--max-steps 18`, expect roughly one usable take in two, and
+check `success_signal` before committing to a take — a run where nothing
+succeeds cannot be distilled and the video would stop at the judge.
+
 ## Timings, for the voiceover
 
 The number that makes the warm replay land is the cold path's wall clock:
@@ -48,6 +84,10 @@ The number that makes the warm replay land is the cold path's wall clock:
 Branches run concurrently, so end to end is **~4.5 minutes**, of which
 **infrastructure is 4.5 seconds**. Everything else is agents thinking — which is
 exactly the contrast the warm replay inverts. Quote ~4.5 minutes, not the sum.
+
+**Quote the number from the take you actually show.** These are take 1's; take 3
+ran 8.6 minutes for the same request. The cold wall clock is the slowest branch,
+not the winner — a losing branch hanging on a blocked provider sets it.
 
 ## What the run proved
 
