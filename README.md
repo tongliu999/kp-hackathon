@@ -180,3 +180,11 @@ runbook-cold-task-demo --delay 0.2 \
 This coordinator intentionally performs no bookings or other irreversible side
 effects. A real agent runner can implement `ColdTaskWorker` later while keeping
 the same lifecycle and callback contract.
+
+## Demo operations
+
+The contract-tested request, three-minute stage cues, presenter roles, safety
+language, failure pivots, and rehearsal checklist live in
+[`docs/demo-run-of-show.md`](docs/demo-run-of-show.md). The machine-readable
+request fixture is [`demo/demo_config.json`](demo/demo_config.json); edit both
+only together and run the test suite to catch phrasing or normalization drift.
