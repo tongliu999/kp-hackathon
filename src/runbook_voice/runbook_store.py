@@ -136,11 +136,13 @@ _VALUE_WEIGHT = 0.25
 _MINIMUM_EVIDENCE = 0.5
 
 # Fuzzy comparison is for slips, not for synonyms.  Short words are excluded
-# because one edit is the whole difference between real words (table/cable,
+# because one edit is the whole difference between two real words (table/cable,
 # book/look, hair/hail), and the first letter must agree because typing and
-# speech-to-text slips almost never land there.
+# speech-to-text slips almost never land there.  Within those limits a word may
+# be up to three tenths wrong -- enough for "restraunt", which is three edits
+# from "restaurant" and one of the ways people actually spell it.
 _MIN_FUZZY_LENGTH = 6
-_LONG_WORD_LENGTH = 9
+_MAX_SLIP_TENTHS = 3
 
 _MATCH_FIELDS = frozenset(
     {
@@ -207,14 +209,18 @@ def _similarity(left: str, right: str) -> float:
 
     if left == right:
         return 1.0
-    shorter = min(len(left), len(right))
-    if shorter < _MIN_FUZZY_LENGTH or left[0] != right[0]:
+    if min(len(left), len(right)) < _MIN_FUZZY_LENGTH or left[0] != right[0]:
         return 0.0
-    tolerance = 2 if shorter >= _LONG_WORD_LENGTH else 1
+    longest = max(len(left), len(right))
+    # Integer arithmetic: 1 - 3/10 is not exactly 0.7 in binary, and a word that
+    # is exactly three tenths wrong is the case this is here to admit.
+    tolerance = (_MAX_SLIP_TENTHS * longest) // 10
+    if tolerance == 0:
+        return 0.0
     distance = _edit_distance(left, right, tolerance)
     if distance > tolerance:
         return 0.0
-    return 1.0 - distance / max(len(left), len(right))
+    return 1.0 - distance / longest
 
 
 @lru_cache(maxsize=8192)

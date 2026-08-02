@@ -324,6 +324,8 @@ REPHRASINGS = [
     "book me a japanese resturant on sunday for 4 pm",
     "book me an italian restuarant for 2 tmmrw at 7pm",
     "reserve a restuarant table tomorrow",
+    "book a restraunt for sunday",
+    "make me a resevation somewhere italian",
     # Abbreviated values.
     "book a table tmrw 7pm for 4",
     # Different slot values from the ones the skill was learned on.
