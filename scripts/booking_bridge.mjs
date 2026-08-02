@@ -112,17 +112,39 @@ const BOX_NAME = process.env.BOOKING_SAILBOX ?? "";
  * into a 30s timeout. Enforcing a single tab is cheap insurance against that
  * recurring during a rehearsal.
  */
+let cdpBrowser = null;
+
 async function acquirePage() {
   if (!INSIDE_SAILBOX) {
     throw new Error("acquirePage() must only run inside the Sailbox — see delegateToSailbox().");
   }
   const { chromium } = await import("playwright");
   const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
+  cdpBrowser = browser;
   const context = browser.contexts()[0];
   const pages = context.pages();
   const [keep, ...stray] = pages.length > 0 ? pages : [await context.newPage()];
   await Promise.all(stray.map((p) => p.close().catch(() => {})));
   return keep;
+}
+
+/**
+ * Disconnect from CDP so this process can exit.
+ *
+ * Not cosmetic: the CDP websocket is an active handle, so without this the
+ * in-box bridge writes its JSON response and then hangs forever, and
+ * delegateToSailbox()'s box.run() waits on an exit that never comes. It looks
+ * exactly like the browser work being slow -- running the same command with a
+ * `timeout` wrapper "fixes" it and hides the cause.
+ *
+ * close() on a CDP attachment disconnects the client; it does not kill the
+ * box's browser, which must survive between steps and rehearsals.
+ */
+async function releaseBrowser() {
+  if (!cdpBrowser) return;
+  const browser = cdpBrowser;
+  cdpBrowser = null;
+  await browser.close().catch(() => {});
 }
 
 /**
@@ -309,4 +331,8 @@ try {
     }) + "\n"
   );
   process.exitCode = 1;
+} finally {
+  // Runs on the failure path too: a step that threw mid-booking must not leave
+  // the process pinned open by its CDP connection.
+  await releaseBrowser();
 }
