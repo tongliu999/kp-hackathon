@@ -17,6 +17,37 @@ pip install -e '.[dev]'
 pytest
 ```
 
+## Intent and slot-filling dialogue
+
+`SlotFillingDialogue` connects the store to a deliberately narrow voice-text
+boundary. The input only needs `listen() -> str`, and the output only needs
+`say(text)`. This keeps the policy testable without microphones or service
+credentials while real transcription and speech adapters remain separate:
+
+```python
+from runbook_voice import DialogueStatus, SlotFillingDialogue
+
+dialogue = SlotFillingDialogue(store, transcribed_input, spoken_output)
+outcome = dialogue.run(
+    "Make a dinner reservation",
+    prefilled_slots={"date": "tomorrow"},
+)
+
+if outcome.status is DialogueStatus.READY:
+    invocation = outcome.invocation
+    # await executor.execute(invocation.runbook, invocation.slot_values)
+elif outcome.status is DialogueStatus.NO_MATCH:
+    # TON-14 replaces this explicit seam with cold-path search.
+    assert outcome.message == "I don't know how to do that yet"
+```
+
+Missing required slots are requested one at a time in schema declaration order.
+Empty or type-invalid replies receive only `I didn't catch that`, with a bounded
+number of attempts. Defaults and prefilled values are retained, and all resolved
+values are spoken back before a ready invocation is returned. The async
+`AsyncSlotFillingDialogue` follows the same policy for event-loop based voice
+adapters.
+
 Service credentials belong in environment variables and must never be
 committed. Irreversible side effects are always executed on a single confirmed
 path; branching search must not call them.
