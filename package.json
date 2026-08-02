@@ -1,0 +1,16 @@
+{
+  "name": "kp-hackathon-booking",
+  "version": "0.1.0",
+  "description": "Track C (booking) modules for the Runbook Voice Assistant hackathon build.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/booking/__tests__/*.test.js",
+    "reset": "node src/index.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@sailresearch/sdk": "^0.5.6"
+  }
+}
