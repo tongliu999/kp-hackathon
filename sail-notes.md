@@ -364,10 +364,42 @@ from residential), which is Imperva classifying the traffic before it ever
 reaches the origin.
 
 **Consequence for any in-box auth plan:** logging in *from* a Sailbox may be
-impossible regardless of credentials. The workaround is to authenticate on a
-residential IP and move the resulting session into the box's profile, which is
-sound here precisely because the *non-auth* endpoints are not blocked. Verify a
-provider's auth endpoint from the box **before** choosing it.
+impossible regardless of credentials. Verify a provider's auth endpoint from the
+box **before** choosing it.
+
+### Importing a session does not rescue it — tried, and it fails for the same reason
+
+The obvious workaround is to authenticate on a residential IP and carry the
+cookies in. It was implemented (`scripts/import-session.mjs`) and it does not
+work for Resy.
+
+All 15 cookies import cleanly, including the httpOnly `production_refresh_token`,
+and the token survives in the profile. But it is a **refresh** token: on every
+page load the app exchanges it for an access token via
+
+```
+POST https://api.resy.com/3/auth/refresh   ->  net::ERR_FAILED   (from the box)
+GET  https://api.resy.com/3/collections    ->  200               (same page load)
+```
+
+The exchange is an auth endpoint, so it is blocked, so the session never
+activates. The page renders logged-out with a perfectly valid credential sitting
+in its cookie jar.
+
+**The general shape: a session is not a cookie, it is a cookie plus the right to
+refresh it.** Any provider that mints short-lived access tokens from a
+long-lived refresh token cannot be smuggled into an environment whose egress the
+provider blocks — you would have to import a fresh access token faster than it
+expires, which is not a demo you want to run.
+
+An access token cached in `localStorage` could in principle be imported instead
+(Playwright's `storageState` carries origins as well as cookies), but it would
+expire mid-demo with no way to refresh, which is worse than a stub.
+
+**What actually fixes it** is changing the egress, not the credential: route the
+box's browser through a proxy on a non-datacenter IP (`--proxy-server`, e.g. via
+an `ssh -R` reverse tunnel from a laptop). Then auth and booking both work and
+the session still lives in the box's on-disk profile.
 
 ### The recipe that works — TON-13 branches need this exact setup
 
