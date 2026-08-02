@@ -27,6 +27,10 @@ runbooks.json
 # on every run, and bookings.json is live booking state, not source.
 demo/runbook-store.json*
 demo/bookings.json
+demo/assistant-store.json*
+demo/assistant-bookings.json
+demo/proof-store.json*
+demo/proof-bookings.json
 # Live branching-search output. fixtures/trajectories/ holds the locked
 # hand-written examples; real runs must not be mixed into them.
 runs/

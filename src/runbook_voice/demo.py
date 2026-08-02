@@ -2,6 +2,7 @@
 
     runbook-demo check     everything that must be true before we present
     runbook-demo warm      the live warm run: request -> confirm -> booking
+    runbook-demo assistant always-on: warm if known, learn the task if not
     runbook-demo prove     TON-25: cold once, instant after — the demo
     runbook-demo reset     cancel every open booking
 
@@ -219,6 +220,13 @@ def run_prove(args) -> int:
     return asyncio.run(prove(args))
 
 
+def run_assistant(args) -> int:
+    """The product loop. Lazy import for the same reason as prove."""
+    from .assistant import session
+
+    return asyncio.run(session(args))
+
+
 def reset(_args) -> int:
     runner = NodeBookingRunner(store_path=BOOKINGS)
     try:
@@ -251,6 +259,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--live", action="store_true", help="BOOK FOR REAL (default: stub)")
     p.add_argument("--app", default="branch-proof", help="Sail app namespace")
     p.set_defaults(fn=run_prove)
+
+    a = sub.add_parser("assistant", help="always-on: warm if known, learn if not")
+    a.add_argument("--recorded", action="store_true",
+                   help="fixture trajectories on a miss instead of booting Sailboxes")
+    a.add_argument("--live", action="store_true", help="BOOK FOR REAL (default: stub)")
+    a.add_argument("--fresh", action="store_true", help="forget every learned skill first")
+    a.add_argument("--app", default="assistant", help="Sail app namespace")
+    a.set_defaults(fn=run_assistant)
 
     sub.add_parser("reset", help="cancel every open booking").set_defaults(fn=reset)
 
