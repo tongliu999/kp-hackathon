@@ -56,6 +56,7 @@ from .runbooks import (
     SlotType,
     substitute_slots,
 )
+from .sailbox import BoxHandle, SailboxError, boot, connect
 from .voice import LatencyReport, VoiceEchoLoop
 from .warm_replay import (
     ReplayExecutor,
@@ -72,6 +73,7 @@ __version__ = "0.1.0"
 __all__ = [
     "AudioClip",
     "AsyncDialogueInput",
+    "BoxHandle",
     "AsyncDialogueOutput",
     "AsyncSlotFillingDialogue",
     "ColdTaskCoordinator",
@@ -106,6 +108,7 @@ __all__ = [
     "RunbookStoreCorruptionError",
     "RunbookStoreError",
     "RunbookValidationError",
+    "SailboxError",
     "SlotDefinition",
     "SlotFillingDialogue",
     "SlotResolutionError",
@@ -124,7 +127,9 @@ __all__ = [
     "WarmPathStatus",
     "__version__",
     "ReplayExecutor",
+    "boot",
     "confirmation_text",
+    "connect",
     "parse_slot_value",
     "slot_question",
     "substitute_slots",
