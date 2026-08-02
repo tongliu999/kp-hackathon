@@ -106,7 +106,7 @@ export async function search(page, { restaurant, date, time, partySize, city }) 
     query: String(restaurant ?? ""),
   });
   const url = `${BASE_URL}/cities/${citySlug(city)}/search?${params}`;
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await gotoWithRetry(page, url);
 
   // Results stream in after hydration. Waiting on the first slot button is the
   // real readiness signal; networkidle never settles here because the page
@@ -169,6 +169,30 @@ export function selectSlot(results, { time } = {}) {
   return timed.sort((a, b) => b.minutes - a.minutes)[0];
 }
 
+/**
+ * Navigate, retrying transient failures.
+ *
+ * Observed live: one Resy navigation returned ERR_TIMED_OUT and the identical
+ * URL loaded in ~5s immediately after. A single flake on the first step would
+ * abort a whole replay, so navigation gets a couple of attempts.
+ *
+ * ONLY for navigation. A GET is idempotent; the booking click is not, and
+ * retrying it could produce two reservations. Nothing in book() past the slot
+ * click may be wrapped in this.
+ */
+async function gotoWithRetry(page, url, { attempts = 3, timeout = 60_000 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await page.waitForTimeout(2000 * attempt);
+    }
+  }
+  throw new Error(`Resy: ${url} failed after ${attempts} attempts — ${lastError?.message ?? lastError}`);
+}
+
 /** The booking widget is a separate origin; everything below lives inside it. */
 function widget(page) {
   return page.frameLocator('iframe[src*="widgets.resy.com"]');
@@ -213,7 +237,9 @@ export async function book(page, slot) {
 }
 
 export async function cancel(page, record) {
-  await page.goto(`${BASE_URL}/account/reservations`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  // Retried deliberately: this runs unattended between rehearsals, and a
+  // navigation flake here would leave a real booking standing.
+  await gotoWithRetry(page, `${BASE_URL}/account/reservations`);
   await page.waitForTimeout(3000);
 
   // Match on what the user would recognise -- venue and time -- because the

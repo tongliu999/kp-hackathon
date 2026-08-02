@@ -303,26 +303,107 @@ a 20-step warm replay is ~2s of Sail time. The cold path's minutes are all agent
 sleep/resume from a fully dead client. What remains unproven is only whether the **provider**
 still accepts the session, which is the half that needs a real provider to test.
 
+## Browser auth in the box — TON-8 [VERIFIED against prod]
+
+### Some sites block Sail's egress outright. Check this before choosing a provider.
+
+**OpenTable is unusable from a Sailbox.** Its Akamai edge returns **403 Access Denied** for
+search (`/s?term=`), city (`/<city>-restaurants`) and venue (`/r/<venue>`) pages — in a real
+Chromium with a real browser fingerprint, not just curl. Only `/my/profile` (login) renders.
+
+Measured from **three separate Sail egress IPs** — 54.202.28.162, 54.191.8.10, and a fresh
+box — including a forked child, which gets its own IP. So it is an **egress-range** block,
+not one poisoned address. `Sailbox.create()` exposes **no region option**, so there is no
+Sail-side way around it.
+
+Two traps that cost real time here, worth knowing for any provider:
+
+- **Only the login page working makes a network block look like an auth problem.** It is not.
+- **`/s?term=` returns HTTP 200 with an Access Denied *body*.** Status code and page title
+  both lie. **Assert on rendered text**, never on `response.status()` alone.
+
+Resy serves everything from the same box. That is why TON-8 chose it.
+
+### The recipe that works — TON-13 branches need this exact setup
+
+```
+user-data-dir : /root/booking/profile
+chromium      : --no-sandbox --disable-gpu
+                --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+                --user-data-dir=/root/booking/profile --window-size=1440,900
+                --no-first-run --no-default-browser-check
+tunnel        : tcp <ingress> -> scripts/cdp-proxy.js :9223 -> 127.0.0.1:9222
+```
+
+**Attach, don't launch.** `chromium.connectOverCDP()` onto the browser already running in the
+box, then use `browser.contexts()[0]` — the persistent profile's own context. Two failure
+modes this avoids:
+
+- `launchPersistentContext()` against a `user-data-dir` while another chromium holds it either
+  refuses to start or forks a copy of the profile, and **the login appears to have vanished**.
+- `browser.newContext()` is incognito. It carries no cookies, so it passes every local test and
+  is logged out on stage — the exact failure this document warned about above.
+
+`browser.close()` on a CDP attachment **disconnects rather than killing the browser** [VERIFIED]
+— the box's chromium survived it.
+
+### Reaching CDP from outside the box needs a rewriting proxy, not a port forward
+
+Chrome refuses any DevTools request whose `Host` header is not `localhost` or a bare IP
+(anti-DNS-rebinding), and it advertises `webSocketDebuggerUrl` as `ws://127.0.0.1:9222/...`,
+which is meaningless outside the box. So socat/`ssh -L` alone will not do.
+
+**The part that will cost you an hour:** Playwright sends `Connection: keep-alive` and reuses
+**one TCP connection** for both `GET /json/version` and the WebSocket upgrade that follows. A
+proxy that rewrites only the first request head and then splices raw bytes lets the upgrade
+through with the original Host, and Chrome answers `500 Host header is specified and is not an
+IP address or localhost` — *after* the version probe already succeeded. It reads as a WebSocket
+bug and is a header bug. Rewrite **every** head until a `101` is seen, then splice.
+
+**Expose it as `protocol: "tcp"` with an `allowlist`, never as a public HTTP listener.** CDP is
+unauthenticated and is arbitrary code execution in a browser holding a real login and a saved
+card. Note the allowlist pins one caller IP — re-run the setup script from the machine that
+will drive the demo.
+
+### pause() → resume() with a live browser [VERIFIED]
+
+Measured on the box running Xvfb + chromium + the proxy: **12.2s down, 5.0s up**,
+`boot_id` **unchanged** (warm — memory restored, not just disk), chromium and the proxy still
+running, CDP still answering, and **both ingress listeners survived with identical URLs**
+— including the TCP one. A cookie planted before the pause was still present on reconnect
+**from a fresh process**.
+
+This extends TON-7's finding to a live browser: the Sail layer is not what will break warm
+replay. What remains provider-specific is whether the *site* still accepts the session.
+
+### fork() and egress IP [VERIFIED] — settles a previously-open question
+
+A forked child **inherits both the running (detached) chromium and the on-disk profile**, and
+gets a **different egress IP** (54.191.8.10 vs parent 54.202.28.162). So branches do not share
+the parent's outbound address — which matters only if a provider pins sessions to IP.
+
 ## Still open
 
-Answered above: process survival, fork-vs-checkpoint, N=3 concurrency, create timing, and
-disk/memory survival across a disconnect (TON-7).
+Answered above: process survival, fork-vs-checkpoint, N=3 concurrency, create timing,
+disk/memory survival across a disconnect (TON-7), and — new — live-browser survival across
+pause/resume plus the fork egress-IP question (TON-8).
 
-Remaining, and all of it is the **auth** half — it needs a chosen booking provider, so it belongs
-with Talia's TON-8 rather than here:
+Remaining. The first two are now narrowed to a **provider** question — no Sail question is left
+in them — and both are blocked on a real logged-in session, so they belong with TON-8:
 
-- **[OPEN]** Does a real browser login survive `pause()` → `resume()`? *This is the half that sits
-  on the critical path* — it's the warm-replay story and the reason for choosing Sail.
-  **Narrowed by TON-7:** the box layer is settled — disk *and* memory survive sleep/resume from a
-  dead client. What's left is purely whether the provider re-accepts the session, so this is now a
-  provider question, not a Sail question.
-- **[OPEN]** Does a login survive a fork, and **does the child get a different egress IP?** Not
-  stated anywhere in the docs. Only matters if the provider pins sessions to IP or fingerprints
-  the device.
+- **[OPEN]** Does a real **provider session** survive `pause()` → `resume()`? *This is the half
+  that sits on the critical path* — it's the warm-replay story and the reason for choosing Sail.
+  **Fully settled on the Sail side** (TON-7 for disk/memory, TON-8 above for a live browser,
+  its processes and its ingress listeners). What is left is only whether the *site* re-accepts
+  the session.
+- **[OPEN]** Does a **provider session** survive a fork? The mechanics are settled — the child
+  inherits the process and the profile, and gets a **different egress IP** (TON-8 above). What
+  is unknown is whether the site accepts a session arriving from that new address.
 - **[OPEN]** Concurrency ceiling above 3.
 
 Test the first two against the *actual* provider, not a generic site — success means "the provider
-still accepts the session", not "the cookie file is present."
+still accepts the session", not "the cookie file is present." **And assert on rendered DOM text,
+not on `response.status()`** — OpenTable serves its block page as a 200 in some paths.
 
 ## Cost [DOC]
 
