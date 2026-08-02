@@ -654,10 +654,47 @@ def _assemble(
         "name": vocabulary.runbook_name,
         "version": "1",
         "description": vocabulary.description,
-        "utterance_examples": [trajectory["task"]],
+        "utterance_examples": [_generalized_utterance(trajectory["task"], evidence)],
         "slots": slots,
         "steps": document_steps,
     }
+
+
+def _generalized_utterance(task: str, evidence: Sequence[_Evidence]) -> str:
+    """Strip the values that became slots out of the remembered example.
+
+    The example feeds intent matching, so leaving the original values in makes a
+    skill match its own instance better than any other. Distilled from "a table
+    for two on friday at seven, somewhere italian", the skill carried the tokens
+    friday/seven/two/italian — and then failed to match "book a japanese
+    restaurant on saturday", the exact reuse it was supposed to enable.
+
+    A value lifted into a slot is by definition not part of what the request
+    *means*, so it does not belong in the text we match on. Same rule as the
+    runbook body: concrete values become slots everywhere, or nowhere.
+    """
+    generalized = task
+    for item in evidence:
+        # rule.request is the pattern that found this value in the utterance in
+        # the first place, so it strips the request's OWN phrasing — "for two",
+        # "at seven" — which the observed value ("2", "7:00 PM") would not match.
+        generalized = item.rule.request.sub(" ", generalized)
+        observed = str(item.observed).strip()
+        if observed:
+            generalized = re.sub(
+                rf"\b{re.escape(observed)}\b", " ", generalized, flags=re.IGNORECASE
+            )
+    # Removing values mid-sentence leaves dangling connectives and stray commas
+    # ("book a table on , somewhere"). Matching tokenizes these away regardless,
+    # but the example is stored, re-read by humans, and shown in the store.
+    words = [w for w in re.split(r"[\s,]+", generalized) if w]
+    while words and words[-1].casefold() in _DANGLING:
+        words.pop()
+    return " ".join(words)
+
+
+# Prepositions and articles that only made sense in front of a value we removed.
+_DANGLING = frozenset({"at", "on", "in", "for", "a", "an", "the", "somewhere", "to"})
 
 
 def _strings(value: Any) -> Iterable[str]:

@@ -4,7 +4,7 @@
   "version": "1",
   "description": "Book a restaurant table for dinner",
   "utterance_examples": [
-    "book a table for two on friday at seven, somewhere italian"
+    "book a table"
   ],
   "slots": [
     {
