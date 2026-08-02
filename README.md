@@ -256,6 +256,12 @@ Open `http://127.0.0.1:4173`. The demo data lives in
 graph renders. Live fan-out code can emit the same shape without changing the
 UI.
 
+The same page includes a localhost control console, so the demo can be operated
+without a terminal. Its buttons run only a fixed allowlist: the real 3-way Sail
+fan-out, live pairwise judge, trajectory distillation, schema validation, safe
+booking rehearsal, and JavaScript tests. Only one workflow runs at a time, live
+output stays visible, and Stop sends an interrupt so fan-out cleanup can run.
+
 This coordinator intentionally performs no bookings or other irreversible side
 effects. The real worker is `BranchingSearch` below, which implements
 `ColdTaskWorker` and keeps the same lifecycle and callback contract.

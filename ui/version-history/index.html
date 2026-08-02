@@ -42,6 +42,54 @@
           </div>
         </section>
 
+        <section class="control-console" aria-labelledby="console-title">
+          <div class="console-heading">
+            <div>
+              <p class="eyebrow">CONTROL CONSOLE</p>
+              <h2 id="console-title">Run the system</h2>
+            </div>
+            <div id="console-state" class="console-state idle"><i></i><span>Ready</span></div>
+          </div>
+          <div class="console-layout">
+            <div class="task-controls">
+              <label class="request-field">
+                <span>Unknown task for live fan-out</span>
+                <textarea id="fanout-request" rows="3">Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.</textarea>
+              </label>
+              <div class="task-grid" aria-label="Runnable project workflows">
+                <button class="task-button primary" type="button" data-task="fanout">
+                  <span class="task-icon">⑂</span><span><strong>Run live fan-out</strong><small>3 Sailboxes · real trajectories</small></span><em>LIVE</em>
+                </button>
+                <button class="task-button" type="button" data-task="judge">
+                  <span class="task-icon">◇</span><span><strong>Judge trajectories</strong><small>3 pairwise comparisons</small></span><em>LIVE</em>
+                </button>
+                <button class="task-button" type="button" data-task="distill">
+                  <span class="task-icon">↘</span><span><strong>Distill winner</strong><small>Trajectory → runbook</small></span>
+                </button>
+                <button class="task-button" type="button" data-task="validate">
+                  <span class="task-icon">✓</span><span><strong>Validate artifacts</strong><small>Schemas + safety rules</small></span>
+                </button>
+                <button class="task-button" type="button" data-task="rehearse">
+                  <span class="task-icon">↻</span><span><strong>Run rehearsal</strong><small>3 stub bookings + reset</small></span>
+                </button>
+                <button class="task-button" type="button" data-task="tests">
+                  <span class="task-icon">⌁</span><span><strong>Run tests</strong><small>Full JavaScript suite</small></span>
+                </button>
+              </div>
+            </div>
+            <div class="output-panel">
+              <div class="output-toolbar">
+                <div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span></div>
+                <span id="run-label">System output</span>
+                <button id="stop-run" type="button" disabled>Stop</button>
+              </div>
+              <pre id="run-output" aria-live="polite">Ready. Choose a workflow to begin.
+
+Live actions use your local Sail authentication and may consume credits.</pre>
+            </div>
+          </div>
+        </section>
+
         <section class="workspace" aria-label="Agent version history explorer">
           <div class="history-panel">
             <div class="panel-heading">

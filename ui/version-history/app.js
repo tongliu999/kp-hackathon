@@ -2,6 +2,12 @@ import { indexVersionHistory } from "/src/version_history/model.js";
 
 const treeElement = document.querySelector("#history-tree");
 const inspector = document.querySelector("#inspector");
+const runOutput = document.querySelector("#run-output");
+const runLabel = document.querySelector("#run-label");
+const consoleState = document.querySelector("#console-state");
+const stopButton = document.querySelector("#stop-run");
+let activeRunId = null;
+let pollTimer = null;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -17,6 +23,76 @@ function money({ amount, currency }) {
     minimumFractionDigits: amount >= 100 ? 0 : 2,
   }).format(amount);
 }
+
+function setConsoleState(status, label) {
+  consoleState.className = `console-state ${status}`;
+  consoleState.querySelector("span").textContent = label;
+  const busy = status === "running" || status === "stopping";
+  document.querySelectorAll("[data-task]").forEach((button) => {
+    button.disabled = busy;
+  });
+  stopButton.disabled = !busy;
+}
+
+async function pollRun() {
+  if (!activeRunId) return;
+  try {
+    const response = await fetch(`/api/runs/${activeRunId}`);
+    const run = await response.json();
+    if (!response.ok) throw new Error(run.error ?? "Could not read run status");
+    runLabel.textContent = run.label;
+    runOutput.textContent = run.output;
+    runOutput.scrollTop = runOutput.scrollHeight;
+    if (run.status === "running" || run.status === "stopping") {
+      setConsoleState(run.status, run.status === "stopping" ? "Stopping safely" : "Running");
+      pollTimer = window.setTimeout(pollRun, 700);
+    } else {
+      setConsoleState(run.status, run.status === "succeeded" ? "Completed" : run.status);
+      activeRunId = null;
+      pollTimer = null;
+    }
+  } catch (error) {
+    runOutput.textContent += `\n[console] ${error.message}\n`;
+    setConsoleState("failed", "Connection error");
+    activeRunId = null;
+  }
+}
+
+async function startTask(task) {
+  setConsoleState("running", "Starting");
+  runOutput.textContent = "Starting…";
+  try {
+    const body = { task };
+    if (task === "fanout") body.request = document.querySelector("#fanout-request").value;
+    const response = await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const run = await response.json();
+    if (!response.ok) throw new Error(run.error ?? "Could not start workflow");
+    activeRunId = run.id;
+    runLabel.textContent = run.label;
+    runOutput.textContent = run.output;
+    await pollRun();
+  } catch (error) {
+    runOutput.textContent = `[console] ${error.message}`;
+    setConsoleState("failed", "Could not start");
+    activeRunId = null;
+  }
+}
+
+document.querySelectorAll("[data-task]").forEach((button) => {
+  button.addEventListener("click", () => startTask(button.dataset.task));
+});
+
+stopButton.addEventListener("click", async () => {
+  if (!activeRunId) return;
+  stopButton.disabled = true;
+  await fetch(`/api/runs/${activeRunId}/cancel`, { method: "POST" });
+  window.clearTimeout(pollTimer);
+  await pollRun();
+});
 
 function renderNode(node, history) {
   const item = element("li", "tree-item");
