@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   emptyVault, putSession, listSessions, selectSession, removeSession,
-  getCapability, putCapability, saveVault, loadVault, assertOutsideRepo, defaultVaultPath,
+  getCapability, putCapability, recordProbe, saveVault, loadVault, assertOutsideRepo, defaultVaultPath,
 } from "../vault.js";
 import { newKey } from "../crypto.js";
 import { cookie, jwtWithExp } from "./fakes.js";
@@ -130,6 +130,55 @@ test("capability writes merge onto what is already recorded", () => {
   const capability = getCapability(data, "resy.com");
   assert.equal(capability.verdict, "residential-only");
   assert.equal(capability.markers.signedIn, "[data-x]");
+});
+
+// Found by running the live probe: probing /4/find after /4/auth/mobile
+// replaced "residential-only, needs tunnel" with "broken-request", losing the
+// finding the probe existed to establish.
+test("probing a non-auth endpoint does not overwrite the domain's auth verdict", () => {
+  const data = emptyVault();
+  recordProbe(data, "resy.com", {
+    authUrl: "https://api.resy.com/4/auth/mobile",
+    verdict: "residential-only", needsTunnel: true, probedAt: "2026-08-02T12:00:00Z",
+  });
+  recordProbe(data, "resy.com", {
+    authUrl: "https://api.resy.com/4/find",
+    verdict: "broken-request", needsTunnel: null, probedAt: "2026-08-02T12:05:00Z",
+  });
+
+  const capability = getCapability(data, "resy.com");
+  assert.equal(capability.verdict, "residential-only");
+  assert.equal(capability.needsTunnel, true);
+  assert.equal(capability.authUrl, "https://api.resy.com/4/auth/mobile");
+  assert.equal(capability.endpointProbes["https://api.resy.com/4/find"].verdict, "broken-request");
+});
+
+test("a probe of the auth endpoint does update the verdict", () => {
+  const data = emptyVault();
+  recordProbe(data, "resy.com", { authUrl: "https://api.resy.com/4/auth/mobile", verdict: "residential-only", needsTunnel: true });
+  recordProbe(data, "resy.com", { authUrl: "https://api.resy.com/4/auth/mobile", verdict: "box-ok", needsTunnel: false });
+  assert.equal(getCapability(data, "resy.com").verdict, "box-ok");
+});
+
+test("a domain with no known auth endpoint adopts the first one probed", () => {
+  const data = emptyVault();
+  recordProbe(data, "newsite.com", { authUrl: "https://newsite.com/login", verdict: "box-ok", needsTunnel: false });
+  assert.equal(getCapability(data, "newsite.com").authUrl, "https://newsite.com/login");
+  assert.equal(getCapability(data, "newsite.com").verdict, "box-ok");
+});
+
+test("--as-auth-endpoint deliberately redefines which endpoint the verdict is about", () => {
+  const data = emptyVault();
+  recordProbe(data, "resy.com", { authUrl: "https://api.resy.com/4/auth/mobile", verdict: "residential-only", needsTunnel: true });
+  recordProbe(
+    data,
+    "resy.com",
+    { authUrl: "https://api.resy.com/3/auth/password", verdict: "box-ok", needsTunnel: false },
+    { asAuthEndpoint: true }
+  );
+  const capability = getCapability(data, "resy.com");
+  assert.equal(capability.authUrl, "https://api.resy.com/3/auth/password");
+  assert.equal(capability.verdict, "box-ok");
 });
 
 test("the vault refuses to be written inside the repository", () => {

@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { seal, unseal } from "./crypto.js";
 import { normalizeDomain, cookiesForDomain } from "./domains.js";
 import { sessionExpiry, isExpired, describeRemaining } from "./expiry.js";
-import { emptyCapability } from "./capabilities.js";
+import { emptyCapability, authUrlFor } from "./capabilities.js";
 
 export const VAULT_VERSION = 1;
 
@@ -197,4 +197,31 @@ export function putCapability(data, domain, capability) {
   data.capabilities ??= {};
   data.capabilities[key] = { ...getCapability(data, key), ...capability, domain: key };
   return data.capabilities[key];
+}
+
+/**
+ * File a probe result under the right heading.
+ *
+ * `verdict` and `needsTunnel` are statements about the domain's AUTH path.
+ * Probing some other endpoint is useful — it is how you show search works while
+ * login does not — but it says nothing about whether auth needs the tunnel, so
+ * it is recorded alongside rather than over the top. Letting it overwrite loses
+ * the finding the probe existed to establish, which is exactly what happened
+ * the first time this was run live.
+ */
+export function recordProbe(data, domain, patch, { asAuthEndpoint = false } = {}) {
+  const key = normalizeDomain(domain);
+  const current = getCapability(data, key);
+  const authUrl = authUrlFor(key, current);
+
+  const isAuthEndpoint = asAuthEndpoint || !authUrl || patch.authUrl === authUrl;
+  if (isAuthEndpoint) return putCapability(data, key, patch);
+
+  const { verdict, needsTunnel, summary, probedAt, evidence } = patch;
+  return putCapability(data, key, {
+    endpointProbes: {
+      ...(current.endpointProbes ?? {}),
+      [patch.authUrl]: { verdict, needsTunnel, summary, probedAt, evidence },
+    },
+  });
 }

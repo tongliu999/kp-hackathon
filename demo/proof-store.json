@@ -1,0 +1,85 @@
+{
+  "format_version": 1,
+  "runbooks": [
+    {
+      "description": "Book a restaurant table for dinner",
+      "id": "restaurant-reservation",
+      "name": "Book a restaurant table",
+      "slots": [
+        {
+          "description": "the number of people dining",
+          "example": "two",
+          "name": "party_size",
+          "prompt": "How many people?",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "the kind of food",
+          "example": "Italian",
+          "name": "cuisine",
+          "prompt": "What kind of food?",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "the city to book in",
+          "example": "San Francisco",
+          "name": "city",
+          "prompt": "Which city?",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "the day of the reservation",
+          "example": "tomorrow",
+          "name": "date",
+          "prompt": "What day?",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "the reservation time",
+          "example": "seven",
+          "name": "time",
+          "prompt": "What time?",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "steps": [
+        {
+          "action": "restaurant.search",
+          "arguments": {
+            "city": "{{city}}",
+            "cuisine": "{{cuisine}}",
+            "date": "{{date}}",
+            "party_size": "{{party_size}}",
+            "time": "{{time}}"
+          },
+          "description": "Find available tables matching the request",
+          "id": "search",
+          "irreversible": false
+        },
+        {
+          "action": "restaurant.book",
+          "arguments": {
+            "city": "{{city}}",
+            "cuisine": "{{cuisine}}",
+            "date": "{{date}}",
+            "party_size": "{{party_size}}",
+            "time": "{{time}}"
+          },
+          "confirmation_prompt": "Table for {{party_size}} {{cuisine}} in {{city}} on {{date}} at {{time}}. Should I confirm?",
+          "description": "Place the reservation",
+          "id": "book",
+          "irreversible": true
+        }
+      ],
+      "utterance_examples": [
+        "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven."
+      ],
+      "version": "1"
+    }
+  ]
+}

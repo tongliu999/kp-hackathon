@@ -1,0 +1,11 @@
+[
+  {
+    "confirmationRef": "STUB-RESY-XU316Y",
+    "provider": "resy",
+    "status": "booked",
+    "stub": true,
+    "createdAt": "2026-08-02T18:12:46.736Z",
+    "cancelledAt": null,
+    "raw": null
+  }
+]

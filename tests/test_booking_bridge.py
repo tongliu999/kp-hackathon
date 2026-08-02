@@ -38,7 +38,11 @@ async def test_distilled_select_step_replays_without_a_new_agent(tmp_path):
     result = await runner(tmp_path).execute(
         "restaurant.select", {"rank": 1, "time": "7 pm"}
     )
-    assert result == {"selected_rank": 1, "requested_time": "7 pm"}
+    assert result == {
+        "selection": {"rank": 1, "time": "7 pm"},
+        "resolved_by": "restaurant.book",
+        "provider": "resy",
+    }
 
 
 @pytest.mark.asyncio
@@ -79,6 +83,50 @@ async def test_real_mode_never_silently_degrades_to_stub(tmp_path):
 
     open_bookings = await runner(tmp_path, store_path=store).execute("booking.list_open", {})
     assert open_bookings["open"] == [], "a failed real booking must leave nothing behind"
+
+
+@pytest.mark.asyncio
+async def test_every_verb_the_distiller_can_emit_is_dispatchable(tmp_path):
+    """The vocabulary gap that broke TON-21, caught structurally.
+
+    The distiller and the bridge agreed on a schema but not on a VOCABULARY:
+    `restaurant.select` was emitted by one and implemented by neither. Schema
+    validation cannot catch that — it constrains shape, not dispatchability.
+
+    This walks the distiller's own vocabulary rather than a hardcoded list, so
+    adding a verb on either side without the other fails here instead of at
+    replay, mid-run, after earlier steps have already executed.
+    """
+    from runbook_voice.distiller import VOCABULARIES
+
+    bridge = runner(tmp_path, confirmation_is_upstream=True)
+    for vocabulary in VOCABULARIES:
+        for rule in (vocabulary.find, vocabulary.choose, vocabulary.commit):
+            result = await bridge.execute(rule.action, SLOTS)
+            assert result is not None, f"{rule.action} dispatched but returned nothing"
+
+
+@pytest.mark.asyncio
+async def test_distilled_runbook_executes_without_special_casing(tmp_path):
+    """TON-21's actual exit criterion, asserted end to end.
+
+    Validating against the schema is not enough: the distilled runbook is the
+    artifact M3 replays, so it has to survive the real executor.
+    """
+    document = json.loads((ROOT / "fixtures/runbooks/distilled-branch-0.json").read_text())
+    runbook = Runbook.from_dict(document)
+
+    class Gate:
+        async def confirm(self, request):
+            return True
+
+    slots = {slot.name: (2 if slot.type.value == "integer" else "Italian") for slot in runbook.slots}
+    result = await RunbookExecutor(
+        runner(tmp_path, confirmation_is_upstream=True), Gate()
+    ).execute(runbook, slots)
+
+    failed = [s for s in result.steps if s.error]
+    assert result.succeeded, f"synthesized runbook did not replay: {[s.error for s in failed]}"
 
 
 @pytest.mark.asyncio
