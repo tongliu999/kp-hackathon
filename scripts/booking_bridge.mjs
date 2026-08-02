@@ -272,6 +272,26 @@ async function handle(request) {
       return { candidates: results.length, query: params.restaurant, provider };
     }
 
+    case "restaurant.select": {
+      // The distiller's `choose` verb (TON-21). It emits find -> choose -> commit
+      // as the shape of every booking-like task, so the bridge must dispatch all
+      // three or a synthesized runbook is unexecutable.
+      //
+      // DECLARATIVE, and deliberately so. The distiller emits {rank, time} — a
+      // ranking rule over the previous step's results, not a fresh search — and
+      // this bridge runs one process per step, so those results are gone and a
+      // Playwright handle could not have survived anyway. The actual selection
+      // happens inside bookStep(), which re-runs search + selectSlot atomically.
+      //
+      // So this records the intent rather than pretending to resolve it. It does
+      // NOT require a search term: demanding one here would be asking a ranking
+      // step to be a search step.
+      const provider = resolveProvider(args);
+      const rank = args.rank ?? 1;
+      const time = args.time ?? null;
+      return { selection: { rank, time }, resolved_by: "restaurant.book", provider };
+    }
+
     case "restaurant.book": {
       const params = toBookingParams(args);
       const provider = resolveProvider(args);
