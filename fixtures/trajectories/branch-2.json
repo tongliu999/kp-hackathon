@@ -1,0 +1,74 @@
+{
+  "branch_id": "b2",
+  "angle": "Use the map view to find Italian restaurants within walking distance, then book the nearest with availability",
+  "task": "book a table for two on friday at seven, somewhere italian",
+  "steps": [
+    {
+      "i": 0,
+      "t": 0.0,
+      "kind": "think",
+      "action": "plan",
+      "observation_excerpt": "Proximity matters most for a Friday dinner. Use map view and work outward.",
+      "outcome": "ok"
+    },
+    {
+      "i": 1,
+      "t": 2.5,
+      "kind": "browser",
+      "action": "goto",
+      "args": { "url": "https://www.opentable.com/map" },
+      "url": "https://www.opentable.com/map",
+      "observation_excerpt": "Redirected to /s. Map view appears to require a location permission prompt.",
+      "outcome": "error"
+    },
+    {
+      "i": 2,
+      "t": 11.0,
+      "kind": "browser",
+      "action": "click",
+      "args": { "selector": "[data-test='use-my-location']" },
+      "observation_excerpt": "Browser geolocation prompt appeared. No way to accept it from an automated context.",
+      "outcome": "error",
+      "note": "Blocked - headless profile cannot grant geolocation."
+    },
+    {
+      "i": 3,
+      "t": 29.4,
+      "kind": "browser",
+      "action": "fill",
+      "args": { "selector": "[data-test='location-input']", "value": "near me" },
+      "observation_excerpt": "0 results. 'near me' is not a parseable location.",
+      "outcome": "abandoned"
+    },
+    {
+      "i": 4,
+      "t": 48.1,
+      "kind": "browser",
+      "action": "fill",
+      "args": { "selector": "[data-test='location-input']", "value": "downtown" },
+      "observation_excerpt": "Ambiguous location. Disambiguation modal listing 7 cities, none pre-selected.",
+      "outcome": "abandoned"
+    },
+    {
+      "i": 5,
+      "t": 77.6,
+      "kind": "browser",
+      "action": "click",
+      "args": { "selector": "[data-test='city-option']:first-child" },
+      "observation_excerpt": "Selected the first city in the list. Results loaded but for the wrong metro area - 40+ miles away.",
+      "outcome": "error"
+    },
+    {
+      "i": 6,
+      "t": 104.2,
+      "kind": "think",
+      "action": "decide",
+      "observation_excerpt": "Location resolution keeps failing and I have no reliable way to pin the user's city. Stopping rather than booking somewhere wrong.",
+      "outcome": "ok"
+    }
+  ],
+  "final_answer": "Could not complete. Map view needs geolocation permission that the automated browser cannot grant, and text location entry resolved to the wrong metro area. No reservation was made.",
+  "success_signal": false,
+  "wall_ms": 104200,
+  "error": "location_resolution_failed"
+}
