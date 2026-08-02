@@ -9,12 +9,13 @@ const server = await readFile(
   "utf8"
 );
 
-test("UI has semantic tree and inspector surfaces", () => {
+test("UI is a run console with prompt, graph, output, and inspector surfaces", () => {
   assert.match(html, /href="\/ui\/version-history\/styles\.css"/);
   assert.match(html, /src="\/ui\/version-history\/app\.js"/);
-  assert.match(html, /aria-label="Version tree"/);
+  assert.match(html, /aria-label="Prompt runs"/);
+  assert.match(html, /aria-label="Selected prompt branch graph"/);
   assert.match(html, /aria-labelledby="inspector-title"/);
-  assert.match(html, /Live trace synced/);
+  assert.match(html, /Local runtime/);
   assert.match(html, /data-task="fanout"/);
   assert.match(html, /data-task="judge"/);
   assert.match(html, /id="run-output"/);
@@ -32,17 +33,41 @@ test("inspector renders every requested audit category", () => {
   ]) {
     assert.ok(app.includes(label), label);
   }
-  assert.match(app, /aria-pressed/);
-  assert.match(app, /scrollIntoView/);
+  assert.match(app, /traceStep/);
+  assert.match(app, /Raw trajectory JSON/);
+  assert.match(app, /\/api\/history/);
   assert.match(app, /\/api\/runs/);
   assert.match(app, /data-task/);
 });
 
 test("console server uses a fixed task allowlist without a shell", () => {
-  for (const task of ["fanout", "judge", "distill", "validate", "rehearse", "tests"]) {
+  for (const task of ["fanout", "judge", "distill", "validate", "demo-check", "rehearse", "tests"]) {
     assert.ok(server.includes(`task === "${task}"`), task);
   }
   assert.match(server, /shell: false/);
   assert.match(server, /already running/);
   assert.match(server, /kill\("SIGINT"\)/);
+  assert.match(server, /\/api\/history/);
+  assert.ok(server.includes("/^b\\d+\\.json$/"));
+  assert.ok(server.includes('"runbook_voice.distiller"'));
+  assert.ok(server.includes('"runbook_voice.demo"'));
+});
+
+test("console includes a no-terminal authentication workspace", () => {
+  for (const id of [
+    "show-auth", "auth-workspace", "provider-list", "auth-accounts",
+    "grant-form", "auth-grants", "auth-audit",
+  ]) {
+    assert.ok(html.includes(`id="${id}"`), id);
+  }
+  for (const endpoint of [
+    "/api/auth", "/api/auth/oauth/start", "/api/auth/grants",
+    "/api/auth/rotate",
+  ]) {
+    assert.ok(server.includes(endpoint), endpoint);
+  }
+  assert.match(app, /Connect OAuth/);
+  assert.match(html, /Create scoped grant/);
+  assert.match(app, /window\.confirm/);
+  assert.match(app, /Existing grants will stop immediately/);
 });

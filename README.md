@@ -239,32 +239,65 @@ npm run rehearse -- --cold-video /absolute/path/to/cold-path.mp4
 This command never contacts a booking provider. The three-person stage
 rehearsal and a real book/cancel cycle remain manual acceptance checks.
 
-## Agent version history explorer
+## Agent run console
 
-The version-history UI makes branching agent work inspectable like source
-control. It renders the Founder v1 strategy tree and lets you select any node
-to inspect attempts, file changes, emails, conversations, spend, metrics, and
-lessons:
+The browser UI is an operational console for branching agent work. Its left
+rail lists every recorded and live prompt run found under `demo/cold-capture`
+and `runs`; the center renders that prompt and its branch nodes; the inspector
+shows every recorded step, command, observation, error, abandoned path, final
+answer, metric, and safety outcome for the selected branch:
 
 ```bash
 npm run history
 ```
 
-Open `http://127.0.0.1:4173`. The demo data lives in
-`demo/version-history.json`; its stable contract is documented by
-`schema/version-history.schema.json` and enforced again at runtime before the
-graph renders. Live fan-out code can emit the same shape without changing the
-UI.
+Open `http://127.0.0.1:4173`. From the page you can submit a new prompt to three
+real Sailboxes, judge the selected prompt's trajectories, distill the selected
+branch, run demo preflight, validate artifacts, or execute the test suite. New
+trajectory directories appear as prompt runs automatically when a job finishes.
 
-The same page includes a localhost control console, so the demo can be operated
-without a terminal. Its buttons run only a fixed allowlist: the real 3-way Sail
-fan-out, live pairwise judge, trajectory distillation, schema validation, safe
-booking rehearsal, and JavaScript tests. Only one workflow runs at a time, live
-output stays visible, and Stop sends an interrupt so fan-out cleanup can run.
+The console exposes only that fixed action allowlist—there is no arbitrary shell
+input. Only one workflow runs at a time, live output stays visible, and Stop
+sends an interrupt so Sailbox cleanup can run. Branch traces explicitly show
+that messages, charges, and bookings remain unavailable inside search branches.
 
 This coordinator intentionally performs no bookings or other irreversible side
 effects. The real worker is `BranchingSearch` below, which implements
 `ColdTaskWorker` and keeps the same lifecycle and callback contract.
+
+### Agent authentication workspace (TON-31–37)
+
+Choose **Auth** in the console header to connect and manage agent accounts
+without terminal commands. The workspace supports GitHub and Google OAuth via
+authorization-code + PKCE or device-code flow, account health checks, refresh
+and deterministic rotation, immediate revocation, scoped run/branch grants, and
+redacted credential audit history.
+
+Configure either provider before starting the console:
+
+```bash
+export GITHUB_OAUTH_CLIENT_ID=...
+export GITHUB_OAUTH_CLIENT_SECRET=...       # optional for public clients
+export GITHUB_OAUTH_REDIRECT_URI=http://127.0.0.1:4173/api/auth/callback
+
+export GOOGLE_OAUTH_CLIENT_ID=...
+export GOOGLE_OAUTH_CLIENT_SECRET=...
+export GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:4173/api/auth/callback
+```
+
+Credentials are stored in the existing encrypted vault outside the repository.
+The browser and agents see only opaque `auth_…` handles and safe metadata. An
+agent must also present a matching grant scoped to its run, branch, provider,
+domain, OAuth scopes, action, and expiry. Read grants are reusable until expiry;
+`send`, `write`, `book`, `pay`, `charge`, and `delete` require explicit user
+confirmation and become single-use grants. Fan-out branches therefore cannot
+borrow a sibling's credential or turn a read authorization into an external
+side effect.
+
+Provider tests use deterministic fake HTTP responses. After configuring a real
+OAuth client, the console's **Test** action is the opt-in live smoke test: it
+checks identity and one read-only GitHub repository or Google Calendar request.
+No live auth or provider request runs during `npm test`.
 
 ## Branching search (TON-13)
 

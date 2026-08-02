@@ -78,6 +78,25 @@ test("a key is generated and stored on first use, then reused", async () => {
   assert.equal(second.source, "fake keychain");
 });
 
+test("macOS falls back to a protected key file when non-interactive keychain creation fails", async () => {
+  let stored = null;
+  const keychain = {
+    name: "locked keychain",
+    async read() { return null; },
+    async write() { throw new Error("keychain command timed out"); },
+  };
+  const fileStore = {
+    name: "fake mode-0600 key file",
+    async read() { return stored; },
+    async write(value) { stored = value; },
+  };
+  const first = await loadKey({ env: {}, platform: "darwin", keychain, fileStore });
+  const second = await loadKey({ env: {}, platform: "darwin", keychain, fileStore });
+  assert.ok(first.key.equals(second.key));
+  assert.match(first.source, /created after keychain failure/);
+  assert.equal(second.source, "fake mode-0600 key file");
+});
+
 test("key creation can be refused, for callers that must not mint one", async () => {
   const keychain = { name: "fake keychain", async read() { return null; }, async write() {} };
   await assert.rejects(() => loadKey({ env: {}, platform: "linux", keychain, create: false }), /key creation was not requested/);

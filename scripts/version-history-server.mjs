@@ -1,14 +1,17 @@
 import { createReadStream, mkdirSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createVaultAuthService } from "../src/auth/service.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.VERSION_HISTORY_PORT ?? 4173);
 const runs = new Map();
+const historyRegistry = new Map();
+let authServicePromise = null;
 const MAX_OUTPUT = 80_000;
 const DEFAULT_REQUEST =
   "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.";
@@ -45,6 +48,98 @@ async function readJson(request) {
   return body ? JSON.parse(body) : {};
 }
 
+function authService() {
+  authServicePromise ??= createVaultAuthService().catch((error) => {
+    authServicePromise = null;
+    throw error;
+  });
+  return authServicePromise;
+}
+
+async function readTrajectoryDirectory(directory, source) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const trajectoryFiles = entries
+    .filter((entry) => entry.isFile() && /^b\d+\.json$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+  if (!trajectoryFiles.length) return null;
+
+  const branches = [];
+  for (const filename of trajectoryFiles) {
+    try {
+      const trajectory = JSON.parse(await readFile(path.join(directory, filename), "utf8"));
+      if (!trajectory.branch_id || !trajectory.task || !Array.isArray(trajectory.steps)) continue;
+      branches.push(trajectory);
+    } catch {
+      // A partially-written file must not make the history API unusable.
+    }
+  }
+  if (!branches.length) return null;
+
+  let winner = null;
+  try {
+    const judgeLog = await readFile(path.join(directory, "judge.log"), "utf8");
+    winner = judgeLog.match(/tally:\s*(b\d+)\s+x\d+/)?.[1] ?? null;
+  } catch {
+    // A run may not have been judged yet.
+  }
+  const relative = path.relative(root, directory);
+  const info = await stat(directory);
+  const id = Buffer.from(relative).toString("base64url");
+  const record = {
+    id,
+    task: branches[0].task,
+    source,
+    path: relative,
+    createdAt: info.mtime.toISOString(),
+    winner,
+    branches,
+    directory,
+  };
+  historyRegistry.set(id, record);
+  return record;
+}
+
+async function findTrajectoryRuns(directory, source, depth = 0) {
+  if (depth > 4) return [];
+  const found = [];
+  const own = await readTrajectoryDirectory(directory, source);
+  if (own) found.push(own);
+  let entries = [];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === "generated") continue;
+    found.push(...(await findTrajectoryRuns(path.join(directory, entry.name), source, depth + 1)));
+  }
+  return found;
+}
+
+async function listHistory() {
+  historyRegistry.clear();
+  const records = [
+    ...(await findTrajectoryRuns(path.join(root, "runs"), "live")),
+    ...(await findTrajectoryRuns(path.join(root, "demo", "cold-capture"), "recorded")),
+  ];
+  return records
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map(({ directory: _directory, ...record }) => record);
+}
+
+function selectedHistory(input) {
+  const record = historyRegistry.get(String(input?.runId ?? ""));
+  if (!record) throw new Error("select a saved prompt run first");
+  return record;
+}
+
 function taskCommand(task, input) {
   if (task === "fanout") {
     const request = String(input?.request ?? DEFAULT_REQUEST).trim();
@@ -62,24 +157,42 @@ function taskCommand(task, input) {
     };
   }
   if (task === "judge") {
+    const record = selectedHistory(input);
     return {
-      label: "Live pairwise trajectory judge",
+      label: "Judge selected prompt run",
       command: "python",
-      args: ["-m", "runbook_voice.judge_check", "--runs", "3", "--expect", "b0"],
+      args: ["-m", "runbook_voice.judge_check", "--runs", "1", "--fixtures", record.directory],
     };
   }
   if (task === "validate") {
     return { label: "Validate runbooks and trajectories", command: "python", args: ["schema/validate.py"] };
   }
   if (task === "distill") {
+    const record = selectedHistory(input);
+    const branchId = String(input?.branchId ?? "");
+    if (!/^b\d+$/.test(branchId)) throw new Error("select a branch to distill");
+    const trajectory = path.join(record.directory, `${branchId}.json`);
+    if (!record.branches.some((branch) => branch.branch_id === branchId)) {
+      throw new Error(`branch ${branchId} is not part of the selected run`);
+    }
+    const safeRun = record.id.slice(0, 20);
     return {
-      label: "Distill winning trajectory",
-      command: "runbook-distill",
+      label: `Distill ${branchId} into a runbook`,
+      command: "python",
       args: [
-        "fixtures/trajectories/branch-0.json",
+        "-m",
+        "runbook_voice.distiller",
+        trajectory,
         "-o",
-        "runs/console-distilled-runbook.json",
+        `runs/generated/${safeRun}-${branchId}.json`,
       ],
+    };
+  }
+  if (task === "demo-check") {
+    return {
+      label: "Demo preflight",
+      command: "python",
+      args: ["-m", "runbook_voice.demo", "check"],
     };
   }
   if (task === "rehearse") {
@@ -109,14 +222,16 @@ function appendOutput(run, chunk) {
 }
 
 function startRun(task, input) {
-  const active = [...runs.values()].find((run) => run.status === "running");
+  const active = [...runs.values()].find(
+    (run) => run.status === "running" || run.status === "stopping"
+  );
   if (active) {
     const error = new Error(`${active.label} is already running`);
     error.statusCode = 409;
     throw error;
   }
   const spec = taskCommand(task, input);
-  mkdirSync(path.join(root, "runs"), { recursive: true });
+  mkdirSync(path.join(root, "runs", "generated"), { recursive: true });
   const run = {
     id: randomUUID(),
     task,
@@ -156,6 +271,104 @@ function startRun(task, input) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (request.method === "GET" && pathname === "/api/auth") {
+    try {
+      json(response, 200, (await authService()).snapshot());
+    } catch (error) {
+      json(response, 503, { error: error.message });
+    }
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/auth/oauth/start") {
+    try {
+      const input = await readJson(request);
+      json(response, 201, await (await authService()).beginOAuth(input));
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
+  if (request.method === "GET" && pathname === "/api/auth/callback") {
+    try {
+      const url = new URL(request.url, "http://localhost");
+      await (await authService()).finishOAuthByState({
+        state: url.searchParams.get("state"),
+        code: url.searchParams.get("code"),
+        error: url.searchParams.get("error"),
+        errorDescription: url.searchParams.get("error_description"),
+      });
+      response.writeHead(303, { Location: "/?workspace=auth&connected=1" }).end();
+    } catch (error) {
+      response.writeHead(303, { Location: `/?workspace=auth&auth_error=${encodeURIComponent(error.message)}` }).end();
+    }
+    return true;
+  }
+  const deviceMatch = pathname.match(/^\/api\/auth\/oauth\/([^/]+)\/poll$/);
+  if (request.method === "POST" && deviceMatch) {
+    try {
+      json(response, 200, await (await authService()).pollDevice(deviceMatch[1]));
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/auth/grants") {
+    try {
+      json(response, 201, await (await authService()).grant(await readJson(request)));
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
+  const grantMatch = pathname.match(/^\/api\/auth\/grants\/([^/]+)\/revoke$/);
+  if (request.method === "POST" && grantMatch) {
+    try {
+      const result = await (await authService()).revokeGrant(grantMatch[1]);
+      json(response, result ? 200 : 404, result ?? { error: "grant not found" });
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
+  const accountMatch = pathname.match(/^\/api\/auth\/accounts\/([^/]+)(?:\/(check|refresh))?$/);
+  if (accountMatch) {
+    try {
+      const service = await authService();
+      if (request.method === "DELETE" && !accountMatch[2]) {
+        const result = await service.revoke(accountMatch[1]);
+        json(response, result ? 200 : 404, result ?? { error: "credential not found" });
+        return true;
+      }
+      if (request.method === "POST" && accountMatch[2] === "check") {
+        json(response, 200, await service.check(accountMatch[1]));
+        return true;
+      }
+      if (request.method === "POST" && accountMatch[2] === "refresh") {
+        json(response, 200, await service.refresh(accountMatch[1], true));
+        return true;
+      }
+    } catch (error) {
+      json(response, 400, { error: error.message });
+      return true;
+    }
+  }
+  if (request.method === "POST" && pathname === "/api/auth/rotate") {
+    try {
+      const input = await readJson(request);
+      json(response, 200, await (await authService()).rotate(input.provider));
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
+  if (request.method === "GET" && pathname === "/api/history") {
+    try {
+      json(response, 200, { runs: await listHistory() });
+    } catch (error) {
+      json(response, 500, { error: error.message });
+    }
+    return true;
+  }
   if (request.method === "POST" && pathname === "/api/runs") {
     try {
       const input = await readJson(request);
