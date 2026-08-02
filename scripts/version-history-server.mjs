@@ -13,6 +13,9 @@ const runs = new Map();
 const historyRegistry = new Map();
 let authServicePromise = null;
 const MAX_OUTPUT = 80_000;
+const DEFAULT_BRANCH_LIMIT = 5;
+const MIN_BRANCHES = 2;
+const MAX_BRANCH_LIMIT = 8;
 const DEFAULT_REQUEST =
   "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.";
 const types = new Map([
@@ -82,9 +85,19 @@ async function readTrajectoryDirectory(directory, source) {
   if (!branches.length) return null;
 
   let winner = null;
+  let learning = null;
+  try {
+    const payload = JSON.parse(await readFile(path.join(directory, "learning.json"), "utf8"));
+    if (payload && typeof payload === "object" && typeof payload.winner === "string") {
+      learning = payload;
+      winner = payload.winner;
+    }
+  } catch {
+    // Older and interrupted runs may not have reached the learning stage.
+  }
   try {
     const judgeLog = await readFile(path.join(directory, "judge.log"), "utf8");
-    winner = judgeLog.match(/tally:\s*(b\d+)\s+x\d+/)?.[1] ?? null;
+    winner ??= judgeLog.match(/tally:\s*(b\d+)\s+x\d+/)?.[1] ?? null;
   } catch {
     // A run may not have been judged yet.
   }
@@ -98,6 +111,7 @@ async function readTrajectoryDirectory(directory, source) {
     path: relative,
     createdAt: info.mtime.toISOString(),
     winner,
+    learning,
     branches,
     directory,
   };
@@ -145,7 +159,10 @@ async function listHistory() {
       winner: null,
       branches: [],
       workflowStatus: run.status,
-      expectedBranches: 3,
+      workflowPhase: run.parentPhase,
+      expectedBranches: run.plannedBranches,
+      plannedApproaches: run.plan?.approaches ?? [],
+      branchLimit: run.branchLimit,
     }));
   return [...activeRecords, ...savedRecords]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -162,9 +179,14 @@ function taskCommand(task, input) {
   if (task === "fanout") {
     const request = String(input?.request ?? DEFAULT_REQUEST).trim();
     if (!request || request.length > 1_000) throw new Error("request must be 1–1,000 characters");
+    const branchLimit = Number(input?.maxBranches ?? DEFAULT_BRANCH_LIMIT);
+    if (!Number.isInteger(branchLimit) || branchLimit < MIN_BRANCHES || branchLimit > MAX_BRANCH_LIMIT) {
+      throw new Error(`maxBranches must be an integer between ${MIN_BRANCHES} and ${MAX_BRANCH_LIMIT}`);
+    }
     return {
-      label: "Live 3-way Sail fan-out",
+      label: "Adaptive Sail fan-out + learn",
       request,
+      branchLimit,
       command: "python",
       args: [
         "-m",
@@ -172,6 +194,10 @@ function taskCommand(task, input) {
         request,
         "--out",
         "runs",
+        "--max-branches",
+        String(branchLimit),
+        "--runbook-store",
+        "demo/runbook-store.json",
       ],
     };
   }
@@ -234,11 +260,40 @@ function publicRun(run) {
     finishedAt: run.finishedAt,
     exitCode: run.exitCode,
     request: run.request,
+    branchLimit: run.branchLimit,
+    plannedBranches: run.plannedBranches,
+    plan: run.plan,
+    parentPhase: run.parentPhase,
+    learning: run.learning,
   };
 }
 
 function appendOutput(run, chunk) {
   run.output = `${run.output}${String(chunk)}`.slice(-MAX_OUTPUT);
+  const planMatch = run.output.match(/PARENT_PLAN\s+(\{[^\n]+\})/);
+  if (planMatch) {
+    try {
+      const plan = JSON.parse(planMatch[1]);
+      if (Number.isInteger(plan.branch_count)) {
+        run.plannedBranches = plan.branch_count;
+        run.plan = plan;
+      }
+      run.parentPhase = "running branches";
+    } catch {
+      // The output may be observed between chunks; the next chunk retries parsing.
+    }
+  }
+  const learnedMatch = run.output.match(/PARENT_LEARNED\s+(\{[^\n]+\})/);
+  if (learnedMatch) {
+    try {
+      run.learning = JSON.parse(learnedMatch[1]);
+      run.parentPhase = "runbook learned";
+    } catch {
+      // The next output chunk retries parsing.
+    }
+  } else if (run.output.includes("parent judging complete trajectories")) {
+    run.parentPhase = "judging and learning";
+  }
 }
 
 function startRun(task, input) {
@@ -256,6 +311,11 @@ function startRun(task, input) {
     id: randomUUID(),
     task,
     request: spec.request ?? null,
+    branchLimit: spec.branchLimit ?? null,
+    plannedBranches: null,
+    plan: null,
+    parentPhase: task === "fanout" ? "planning approaches" : null,
+    learning: null,
     label: spec.label,
     status: "running",
     output: `[console] Starting ${spec.label}…\n`,

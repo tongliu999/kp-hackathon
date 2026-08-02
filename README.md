@@ -251,10 +251,13 @@ answer, metric, and safety outcome for the selected branch:
 npm run history
 ```
 
-Open `http://127.0.0.1:4173`. From the page you can submit a new prompt to three
-real Sailboxes, judge the selected prompt's trajectories, distill the selected
-branch, run demo preflight, validate artifacts, or execute the test suite. New
-trajectory directories appear as prompt runs automatically when a job finishes.
+Open `http://127.0.0.1:4173`. From the page you can set a maximum branch count and
+submit a prompt to the adaptive parent workflow. The parent chooses how many real
+Sailboxes the task needs (2–8, never blindly targeting the maximum), assigns a
+materially different approach to each, judges the complete trajectories, distills
+the winner, validates the result, and updates `demo/runbook-store.json`. The manual
+judge and distill controls remain available for inspection or reruns, alongside demo
+preflight, artifact validation, and the test suite.
 
 The console exposes only that fixed action allowlist—there is no arbitrary shell
 input. Only one workflow runs at a time, live output stays visible, and Stop
@@ -299,20 +302,26 @@ OAuth client, the console's **Test** action is the opt-in live smoke test: it
 checks identity and one read-only GitHub repository or Google Calendar request.
 No live auth or provider request runs during `npm test`.
 
-## Branching search (TON-13)
+## Adaptive parent-led branching search (TON-13)
 
-`BranchingSearch` is the cold path: one unknown request is attempted three ways
-at once, and the three trajectories become the input to the judge (TON-19) and
-the distiller (TON-21). It emits
+`ParentPlanner` first decides how many materially different attempts an unknown
+request deserves within the caller's limit. `BranchingSearch` then executes those
+angles concurrently, and the trajectories become the input to the judge (TON-19)
+and distiller (TON-21). It emits
 [`schema/trajectory.schema.json`](schema/trajectory.schema.json) exactly.
 
+Install both live execution dependencies with `pip install -e '.[live]'`.
+
 ```bash
-runbook-branch-search-demo "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven."
+runbook-branch-search-demo \
+  "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven." \
+  --max-branches 5
 ```
 
 One base Sailbox is booted and seeded, then **checkpointed** and fanned out into
-three children — measured at 3.8s median against 11.0s for `fork()` three times,
-and the checkpoint outlives the parent. Each child runs `branch_agent.py`, a
+the parent-selected number of children. The original three-way case measured 3.8s
+median against 11.0s for `fork()` three times, and the checkpoint outlives the
+parent. Each child runs `branch_agent.py`, a
 stdlib-only program shipped into the box verbatim, which drives its own agent
 loop against Sail's inference API and records every step it takes.
 
@@ -325,9 +334,11 @@ Two details are load-bearing rather than stylistic:
   *after* `trajectory.json`. A branch that dies is salvaged from its step log,
   and a poller never reads a half-written file.
 
-Each branch is given a genuinely different approach (`DEFAULT_ANGLES`), and
-duplicate directives are refused up front — identical prompts produce identical
-trajectories and the judge has nothing to compare. Trajectories capture what was
+Each branch is given a genuinely different parent-planned approach, and duplicate
+angles or directives are refused before a box launches — identical prompts produce
+identical trajectories and the judge has nothing to compare. The built-in
+`DEFAULT_ANGLES` remain a deterministic fallback for direct library callers.
+Trajectories capture what was
 tried, **including dead ends**, because final answers alone leave the distiller
 with nothing to turn into steps.
 
@@ -340,6 +351,13 @@ run — recording the blocked attempt as an abandoned step rather than hiding it
 Output lands in `runs/<job_id>/` (gitignored). It is deliberately not
 `fixtures/trajectories/`, which holds the locked hand-written examples that
 `schema/validate.py` checks.
+
+After fan-out, the same parent workflow compares whole trajectories, writes its
+verdict to `judge.log`, distills only the winning trajectory, admits the result
+through `Runbook.from_dict`, and saves it in the durable `JSONRunbookStore`.
+`learning.json` records the winner, reason, runbook identity, and store path for the
+console. If judgment, distillation, or schema validation fails, the store is not
+updated; the parent never learns a fabricated or invalid procedure.
 
 ## Pairwise judge (TON-19)
 

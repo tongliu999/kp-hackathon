@@ -43,11 +43,17 @@ test("inspector renders every requested audit category", () => {
 test("fan-out prompts appear live in history before trajectories finish", () => {
   assert.match(server, /workflowStatus: run\.status/);
   assert.match(server, /id: `workflow:\$\{run\.id\}`/);
-  assert.match(server, /expectedBranches: 3/);
+  assert.match(server, /expectedBranches: run\.plannedBranches/);
+  assert.match(server, /plannedApproaches: run\.plan\?\.approaches/);
+  assert.match(server, /PARENT_PLAN/);
+  assert.match(server, /PARENT_LEARNED/);
   assert.match(app, /upsertWorkflowHistory/);
   assert.match(app, /activeWorkflow\.workflowId/);
-  assert.match(app, /Fan-out in progress/);
-  assert.match(app, /Agent trajectory is starting/);
+  assert.match(app, /parent choosing up to/);
+  assert.match(app, /Distinct agent trajectory is running/);
+  assert.match(app, /update its durable memory/);
+  assert.match(html, /id="max-branches"/);
+  assert.match(html, /Run adaptive/);
 });
 
 test("console server uses a fixed task allowlist without a shell", () => {

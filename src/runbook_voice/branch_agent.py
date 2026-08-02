@@ -548,7 +548,7 @@ def _run_shell_step(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one branch of a 3-way search.")
+    parser = argparse.ArgumentParser(description="Run one branch of a bounded search.")
     parser.add_argument("--dir", default=BRANCH_DIR, help="working directory in the box")
     args = parser.parse_args(argv)
 

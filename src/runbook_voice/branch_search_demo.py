@@ -1,9 +1,10 @@
-"""Console proof of the 3-way branching search (TON-13).
+"""Adaptive parent-led branching search and runbook learning loop.
 
     PYTHONPATH=src .venv/bin/python -m runbook_voice.branch_search_demo "<request>"
 
-Done means three *different* boxes each produced a schema-valid trajectory with
-steps in it — not three final answers.  Final answers alone make M3 impossible,
+Done means the parent chose a bounded set of different approaches, every box
+produced a schema-valid trajectory, the judge selected a winner, and the parent
+stored a validated runbook. Final answers alone make learning impossible,
 so the summary below reports step counts and dead ends, and the exit code fails
 if any branch came back without steps or without a distinct box id.
 
@@ -30,17 +31,45 @@ from .branch_search import (
     Trajectory,
     resolve_api_key,
 )
+from .judge import DEFAULT_MODEL as DEFAULT_PARENT_MODEL
+from .judge import PairwiseJudge, SailJudgeModel
+from .parent_learning import learn_from_trajectories
+from .parent_planner import (
+    DEFAULT_BRANCH_LIMIT,
+    MAX_BRANCH_LIMIT,
+    MIN_BRANCHES,
+    ParentPlanner,
+    validate_branch_limit,
+)
+from .runbook_store import JSONRunbookStore
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "trajectory.schema.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Fan one unknown request out to 3 Sailboxes and collect their trajectories."
+        description=(
+            "Let a parent choose a bounded fan-out, collect trajectories, judge the "
+            "winner, and save the learned runbook."
+        )
     )
     parser.add_argument("request", help="the unknown task to attempt")
     parser.add_argument("--app", default=DEFAULT_APP, help="Sail app namespace")
     parser.add_argument("--model", default=branch_agent.DEFAULT_MODEL)
+    parser.add_argument(
+        "--parent-model",
+        default=DEFAULT_PARENT_MODEL,
+        help="model used by the parent to plan approaches and judge the winner",
+    )
+    parser.add_argument(
+        "--max-branches",
+        type=int,
+        default=DEFAULT_BRANCH_LIMIT,
+        help=(
+            f"maximum children the parent may choose "
+            f"({MIN_BRANCHES}–{MAX_BRANCH_LIMIT}; default: {DEFAULT_BRANCH_LIMIT})"
+        ),
+    )
     parser.add_argument(
         "--window",
         default=branch_agent.DEFAULT_COMPLETION_WINDOW,
@@ -56,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="per-branch wall-clock budget in seconds",
     )
     parser.add_argument("--out", default="runs", help="output directory")
+    parser.add_argument(
+        "--runbook-store",
+        default="demo/runbook-store.json",
+        help="durable runbook store the parent updates after learning",
+    )
     parser.add_argument(
         "--keep-boxes",
         action="store_true",
@@ -129,9 +163,35 @@ def report(trajectories: Sequence[Trajectory], paths: Sequence[Path]) -> list[st
 
 
 async def run_demo(args: argparse.Namespace) -> int:
+    try:
+        branch_limit = validate_branch_limit(args.max_branches)
+    except ValueError as exc:
+        print(f"invalid branch limit: {exc}")
+        return 2
+
     job_id = secrets.token_hex(6)
+    parent_model = SailJudgeModel(model=args.parent_model)
+    planner = ParentPlanner(parent_model)
+    print(
+        f"parent planning up to {branch_limit} approaches with {args.parent_model}",
+        flush=True,
+    )
+    plan = await asyncio.to_thread(planner.plan, args.request, branch_limit)
+    print(
+        "PARENT_PLAN "
+        + json.dumps(
+            {
+                "branch_count": plan.branch_count,
+                "branch_limit": plan.max_branches,
+                "rationale": plan.rationale,
+                "approaches": [angle.angle for angle in plan.angles],
+            }
+        ),
+        flush=True,
+    )
     search = BranchingSearch(
         app=args.app,
+        angles=plan.angles,
         output_dir=args.out,
         keep_boxes=args.keep_boxes,
         launcher=InBoxAgentLauncher(
@@ -144,7 +204,10 @@ async def run_demo(args: argparse.Namespace) -> int:
         progress=lambda message: print(f"  {message}", flush=True),
     )
 
-    print(f"job {job_id}  app={args.app}  model={args.model}  window={args.window}")
+    print(
+        f"job {job_id}  app={args.app}  branch-model={args.model}  "
+        f"parent-model={args.parent_model}  window={args.window}"
+    )
     print(f"request: {args.request}\n")
     trajectories = await search.search(args.request, job_id)
     paths = search.persist(trajectories, job_id)
@@ -155,7 +218,32 @@ async def run_demo(args: argparse.Namespace) -> int:
         for failure in failures:
             print(f"  {failure}")
         return 1
-    print(f"\nOK — {len(trajectories)} schema-valid trajectories from {len(trajectories)} boxes.")
+    directory = paths[0].parent
+    print("\nparent judging complete trajectories…", flush=True)
+    learned = await asyncio.to_thread(
+        learn_from_trajectories,
+        trajectories,
+        directory=directory,
+        judge=PairwiseJudge(parent_model),
+        store=JSONRunbookStore(args.runbook_store),
+    )
+    print(
+        "PARENT_LEARNED "
+        + json.dumps(
+            {
+                "winner": learned.verdict.winner,
+                "reason": learned.verdict.reason,
+                "runbook_id": learned.runbook.id,
+                "runbook_name": learned.runbook.name,
+                "store_path": str(learned.store_path),
+            }
+        ),
+        flush=True,
+    )
+    print(
+        f"\nOK — parent tried {len(trajectories)} approaches, chose "
+        f"{learned.verdict.winner}, and updated runbook {learned.runbook.id!r}."
+    )
     return 0
 
 

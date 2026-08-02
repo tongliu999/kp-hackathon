@@ -1,9 +1,10 @@
-"""Three-way branching search: one unknown task, three boxes, three trajectories.
+"""Bounded branching search: one unknown task, distinct boxes and trajectories.
 
 The shape is fixed by measurement rather than taste (see ``sail-notes.md``):
 
 * **Checkpoint fan-out, not fork x3.** 3.8s vs 11.0s median over 5 runs, and the
-  checkpoint is durable — the base box can die and children still start.
+    checkpoint is durable — the base box can die and children still start. The
+    parent planner may choose a different count within its configured limit.
 * **Detached branch work.** Anything tied to an in-flight ``exec()`` session is
   reaped in the child, so the agent is launched with ``setsid nohup`` and the
   orchestrator polls for a marker instead of holding the session open.
@@ -41,7 +42,7 @@ BRANCH_DIR = branch_agent.BRANCH_DIR
 CHECKPOINT_TTL_SECONDS = 3600
 
 # python3 is not guaranteed in the Debian base image. Installing it on the base
-# box means the three children inherit it — which is what a checkpoint is for.
+# box means every selected child inherits it — which is what a checkpoint is for.
 SEED_COMMAND = (
     f"mkdir -p {BRANCH_DIR} && "
     "(command -v python3 >/dev/null 2>&1 || "
@@ -321,8 +322,8 @@ def checkpoint_fanout(
 ) -> list[Any]:
     """Branch ``base`` into one child per name, concurrently.
 
-    Checkpoint fan-out rather than ``fork()`` per child: measured at 3.8s vs
-    11.0s median for three children, and the checkpoint outlives the parent.
+    Checkpoint fan-out rather than ``fork()`` per child: the original three-child
+    measurement was 3.8s vs 11.0s median, and the checkpoint outlives the parent.
 
     The caller must have finished seeding the base box first — an ``exec()``
     still in flight is reaped in the children.
@@ -343,7 +344,7 @@ def checkpoint_fanout(
 
 
 class BranchingSearch:
-    """Attempt an unknown request three ways at once and collect the evidence.
+    """Attempt an unknown request through distinct angles and collect evidence.
 
     Satisfies ``ColdTaskWorker``: ``await search.run(request, job_id)`` returns a
     short spoken summary, and the trajectories land under ``output_dir/job_id``.
@@ -464,7 +465,7 @@ class BranchingSearch:
         """Install python3 and the agent program on the base box.
 
         Both finish before the caller checkpoints. Seeding after the fan-out
-        would mean doing it three times; seeding *during* one would mean
+        would mean doing it once per branch; seeding *during* one would mean
         checkpointing with an exec in flight, which the child would not inherit.
         """
         base.run(SEED_COMMAND, check=True)

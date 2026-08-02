@@ -41,6 +41,7 @@ function branchStatus(branch, run) {
 
 function runStatus(run) {
   if (run.workflowStatus) return run.workflowStatus;
+  if (run.learning?.runbook_id) return "learned";
   if (run.winner) return "judged";
   if (run.branches.length && run.branches.every((branch) => branch.success_signal)) return "complete";
   return "mixed";
@@ -57,8 +58,17 @@ function workflowHistory(run) {
     winner: null,
     branches: [],
     workflowStatus: run.status,
-    expectedBranches: 3,
+    workflowPhase: run.parentPhase,
+    expectedBranches: run.plannedBranches,
+    plannedApproaches: run.plan?.approaches ?? [],
+    branchLimit: run.branchLimit,
+    learning: run.learning,
   };
+}
+
+function liveRunMeta(run) {
+  if (run.expectedBranches) return `${run.expectedBranches} approaches · ${run.workflowPhase ?? "running"}`;
+  return `parent choosing up to ${run.branchLimit ?? 5}`;
 }
 
 function upsertWorkflowHistory(run, { select = false } = {}) {
@@ -100,7 +110,7 @@ async function loadHistory({ preferPrompt } = {}) {
   if (activeWorkflow && !activeRunId) {
     activeRunId = activeWorkflow.workflowId;
     lastFanoutPrompt = activeWorkflow.task;
-    runLabel.textContent = "Live 3-way Sail fan-out";
+    runLabel.textContent = "Adaptive Sail fan-out + learn";
     setConsoleState(activeWorkflow.workflowStatus, activeWorkflow.workflowStatus === "stopping" ? "Stopping safely" : "Running");
     pollTimer = window.setTimeout(pollRun, 100);
   }
@@ -133,7 +143,7 @@ function renderRunList() {
     button.append(top, element("strong", "", compact(run.task, 68)));
     const meta = element("span", "run-list-meta");
     const branchMeta = run.workflowStatus
-      ? `${run.expectedBranches ?? 3} branches starting`
+      ? liveRunMeta(run)
       : `${run.branches.length} branches`;
     meta.append(element("span", "", branchMeta));
     meta.append(element("span", "", new Date(run.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })));
@@ -150,7 +160,7 @@ function selectRun(run) {
   const meta = document.querySelector("#selected-meta");
   meta.replaceChildren(
     element("span", `source-chip ${run.source}`, run.source),
-    element("span", "", run.workflowStatus ? `${run.expectedBranches ?? 3} branches starting` : `${run.branches.length} trajectories`),
+    element("span", "", run.workflowStatus ? liveRunMeta(run) : `${run.branches.length} trajectories`),
     element("span", "", run.workflowStatus ?? (run.winner ? `winner ${run.winner}` : "not judged")),
     element("span", "", run.path)
   );
@@ -167,7 +177,10 @@ function renderBranchCanvas() {
   promptNode.type = "button";
   promptNode.append(element("span", "node-kicker", "PROMPT"));
   promptNode.append(element("strong", "", compact(selectedRun.task, 118)));
-  promptNode.append(element("small", "", `${selectedRun.branches.length} independent approaches`));
+  const approachCount = selectedRun.workflowStatus
+    ? (selectedRun.expectedBranches ? `${selectedRun.expectedBranches} parent-planned approaches` : `parent choosing up to ${selectedRun.branchLimit ?? 5} approaches`)
+    : `${selectedRun.branches.length} independent approaches`;
+  promptNode.append(element("small", "", approachCount));
   promptNode.addEventListener("click", () => {
     selectedBranch = null;
     renderBranchCanvas();
@@ -177,13 +190,28 @@ function renderBranchCanvas() {
 
   const branches = element("div", "branch-row");
   if (selectedRun.workflowStatus && !selectedRun.branches.length) {
-    for (let index = 0; index < (selectedRun.expectedBranches ?? 3); index += 1) {
+    if (!selectedRun.expectedBranches) {
+      const planner = element("div", "branch-node live-branch parent-planner-node");
+      const heading = element("span", "branch-heading");
+      heading.append(element("span", "branch-id", "parent"));
+      heading.append(element("span", "branch-state running", "planning"));
+      planner.append(heading);
+      planner.append(element("span", "branch-angle", `Choosing 2–${selectedRun.branchLimit ?? 5} materially different approaches…`));
+      const progress = element("span", "live-progress");
+      progress.append(element("i"), element("i"), element("i"));
+      planner.append(progress);
+      branches.append(planner);
+    }
+    for (let index = 0; index < (selectedRun.expectedBranches ?? 0); index += 1) {
       const node = element("div", "branch-node live-branch");
       const heading = element("span", "branch-heading");
       heading.append(element("span", "branch-id", `b${index}`));
       heading.append(element("span", "branch-state running", selectedRun.workflowStatus));
       node.append(heading);
-      node.append(element("span", "branch-angle", "Agent trajectory is starting…"));
+      const phaseCopy = selectedRun.workflowPhase === "judging and learning"
+        ? "Trajectory complete; parent is judging and learning…"
+        : "Distinct agent trajectory is running…";
+      node.append(element("span", "branch-angle", selectedRun.plannedApproaches?.[index] ?? phaseCopy));
       const progress = element("span", "live-progress");
       progress.append(element("i"), element("i"), element("i"));
       node.append(progress);
@@ -240,10 +268,18 @@ function renderRunSummary() {
   inspector.append(header);
   if (selectedRun.workflowStatus) {
     const live = element("section", "live-run-summary");
-    live.append(element("strong", "", "Fan-out in progress"));
-    live.append(element("p", "", "Three independent agents are starting. This prompt will stay in the sidebar, and completed trajectories will replace these live placeholders automatically."));
+    live.append(element("strong", "", selectedRun.workflowPhase ?? "Parent workflow in progress"));
+    live.append(element("p", "", selectedRun.expectedBranches
+      ? `The parent chose ${selectedRun.expectedBranches} distinct approaches within your limit. After they finish, it will judge the complete trajectories, distill the winner, validate the runbook, and update its durable memory.`
+      : `The parent is deciding how many distinct approaches this task needs, up to your limit of ${selectedRun.branchLimit ?? 5}.`));
     inspector.append(live);
     return;
+  }
+  if (selectedRun.learning?.runbook_id) {
+    const learned = element("section", "learned-run-summary");
+    learned.append(element("strong", "", `Parent learned ${selectedRun.learning.runbook_name ?? selectedRun.learning.runbook_id}`));
+    learned.append(element("p", "", `${selectedRun.learning.reason} The validated runbook was saved as ${selectedRun.learning.runbook_id} in ${selectedRun.learning.store_path}.`));
+    inspector.append(learned);
   }
   const grid = element("div", "run-metric-grid");
   const totalSteps = selectedRun.branches.reduce((sum, branch) => sum + branch.steps.length, 0);
@@ -372,6 +408,7 @@ async function startTask(task) {
     const body = { task };
     if (task === "fanout") {
       body.request = document.querySelector("#fanout-request").value.trim();
+      body.maxBranches = Number(document.querySelector("#max-branches").value);
       lastFanoutPrompt = body.request;
     }
     if (task === "judge" || task === "distill") {
