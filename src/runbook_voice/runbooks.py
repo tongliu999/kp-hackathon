@@ -62,6 +62,9 @@ class SlotDefinition:
     type: SlotType = SlotType.STRING
     required: bool = True
     description: str | None = None
+    # The spoken question asked when this slot is missing. `description` is
+    # documentation ("the party size"); `prompt` is askable ("How many people?").
+    prompt: str | None = None
     default: Any = field(default=_NO_DEFAULT, repr=False)
 
     def __post_init__(self) -> None:
@@ -102,6 +105,7 @@ class SlotDefinition:
             "type": document.get("type", SlotType.STRING),
             "required": document.get("required", True),
             "description": document.get("description"),
+            "prompt": document.get("prompt"),
         }
         if "default" in document:
             kwargs["default"] = document["default"]
@@ -115,6 +119,8 @@ class SlotDefinition:
         }
         if self.description is not None:
             document["description"] = self.description
+        if self.prompt is not None:
+            document["prompt"] = self.prompt
         if self.has_default:
             document["default"] = _thaw(self.default)
         return document

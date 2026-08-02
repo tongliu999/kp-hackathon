@@ -260,6 +260,10 @@ def parse_slot_value(slot: SlotDefinition, response: str) -> Any:
 def slot_question(slot: SlotDefinition) -> str:
     """Build the one allowed question for a missing slot."""
 
+    # A hand-written prompt is already a question; use it verbatim rather than
+    # wrapping it into "Please provide How many people?".
+    if slot.prompt:
+        return slot.prompt.strip()
     label = (slot.description or slot.name.replace("_", " ")).strip().rstrip(".?")
     return f"Please provide {label}."
 

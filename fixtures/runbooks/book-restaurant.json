@@ -1,106 +1,91 @@
 {
   "id": "book-restaurant",
-  "version": 1,
-  "source": "handwritten",
-  "description": "Reserve a table at a restaurant for a given party size, date, time, and optionally a cuisine",
+  "name": "Book a restaurant table",
+  "version": "1",
+  "description": "Reserve a table at a restaurant for a given party size, date, time, city, and cuisine",
   "utterance_examples": [
     "book me a table for two friday at seven",
     "get us a dinner reservation saturday night",
     "reserve somewhere italian for four people tomorrow at eight"
   ],
   "slots": [
-    { "name": "party_size", "prompt": "How many people?", "example": "2" },
-    { "name": "date", "prompt": "What day?", "example": "Friday" },
-    { "name": "time", "prompt": "What time?", "example": "7:00 PM" },
+    {
+      "name": "party_size",
+      "type": "integer",
+      "required": true,
+      "description": "the party size",
+      "prompt": "How many people?",
+      "example": "2"
+    },
     {
       "name": "cuisine",
+      "type": "string",
+      "required": false,
+      "description": "the cuisine",
       "prompt": "Any particular kind of food?",
-      "example": "Italian",
-      "required": false
+      "default": "any",
+      "example": "Italian"
+    },
+    {
+      "name": "city",
+      "type": "string",
+      "required": true,
+      "description": "the city",
+      "prompt": "Which city?",
+      "example": "San Francisco"
+    },
+    {
+      "name": "date",
+      "type": "string",
+      "required": true,
+      "description": "the date",
+      "prompt": "What day?",
+      "example": "Friday"
+    },
+    {
+      "name": "time",
+      "type": "string",
+      "required": true,
+      "description": "the time",
+      "prompt": "What time?",
+      "example": "7:00 PM"
     }
   ],
   "steps": [
     {
-      "id": "open",
-      "kind": "browser",
-      "op": "goto",
-      "url": "https://www.opentable.com",
-      "description": "Open the reservations site using the logged-in profile",
-      "expect": "[data-test='user-menu']"
-    },
-    {
-      "id": "set-party",
-      "kind": "browser",
-      "op": "fill",
-      "selector": "[data-test='party-size-picker']",
-      "value": "{{party_size}}",
-      "description": "Set the party size"
-    },
-    {
-      "id": "set-datetime",
-      "kind": "browser",
-      "op": "fill",
-      "selector": "[data-test='date-picker']",
-      "value": "{{date}} {{time}}",
-      "description": "Set the date and time"
-    },
-    {
-      "id": "set-cuisine",
-      "kind": "browser",
-      "op": "fill",
-      "selector": "[data-test='search-input']",
-      "value": "{{cuisine}}",
-      "description": "Filter by cuisine"
-    },
-    {
       "id": "search",
-      "kind": "browser",
-      "op": "submit",
-      "selector": "[data-test='search-form']",
-      "description": "Run the search",
-      "expect": "[data-test='result-card']"
+      "action": "restaurant.search",
+      "description": "Find available tables matching the request",
+      "arguments": {
+        "party_size": "{{party_size}}",
+        "cuisine": "{{cuisine}}",
+        "city": "{{city}}",
+        "date": "{{date}}",
+        "time": "{{time}}"
+      },
+      "irreversible": false
     },
     {
-      "id": "read-top",
-      "kind": "browser",
-      "op": "read",
-      "selector": "[data-test='result-card']:first-child [data-test='restaurant-name']",
-      "capture": "restaurant_name",
-      "description": "Read the top available restaurant"
-    },
-    {
-      "id": "read-slot",
-      "kind": "browser",
-      "op": "read",
-      "selector": "[data-test='result-card']:first-child [data-test='slot-time']",
-      "capture": "slot_time",
-      "description": "Read the exact time being offered"
-    },
-    {
-      "id": "select-slot",
-      "kind": "browser",
-      "op": "click",
-      "selector": "[data-test='result-card']:first-child [data-test='slot-time']",
-      "description": "Open the reservation for that slot",
-      "expect": "[data-test='complete-reservation']"
-    },
-    {
-      "id": "confirm-booking",
-      "kind": "browser",
-      "op": "click",
-      "selector": "[data-test='complete-reservation']",
-      "description": "Complete the reservation",
+      "id": "book",
+      "action": "restaurant.book",
+      "description": "Place the reservation",
+      "arguments": {
+        "provider": "configured-provider",
+        "party_size": "{{party_size}}",
+        "cuisine": "{{cuisine}}",
+        "city": "{{city}}",
+        "date": "{{date}}",
+        "time": "{{time}}"
+      },
       "irreversible": true,
-      "confirm": "Booking {{restaurant_name}} for {{party_size}} at {{slot_time}} on {{date}}. Should I confirm?",
-      "expect": "[data-test='confirmation-number']"
+      "confirmation_prompt": "Table for {{party_size}}, {{cuisine}}, in {{city}} on {{date}} at {{time}}. Should I confirm?"
     },
     {
       "id": "read-confirmation",
-      "kind": "browser",
-      "op": "read",
-      "selector": "[data-test='confirmation-number']",
-      "capture": "confirmation_ref",
-      "description": "Read back the confirmation number so it can be cancelled between rehearsals"
+      "action": "restaurant.read_confirmation",
+      "description": "Read back the confirmation reference so it can be cancelled between rehearsals",
+      "arguments": {},
+      "irreversible": false
     }
   ]
 }

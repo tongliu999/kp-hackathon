@@ -24,27 +24,43 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = ROOT / "schema"
-TEMPLATE = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}")
-TEMPLATED_FIELDS = ("command", "value", "confirm", "url", "selector")
+# Mirrors _SLOT in src/runbook_voice/runbooks.py - keep the two in step.
+TEMPLATE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def _refs(value) -> list[str]:
+    """Collect {{slot}} references from any JSON-like value, recursively.
+
+    Arguments are nested objects and arrays, and substitute_slots walks all of
+    them - so a check that only looked at top-level strings would miss most refs.
+    """
+    if isinstance(value, str):
+        return TEMPLATE.findall(value)
+    if isinstance(value, dict):
+        return [r for v in value.values() for r in _refs(v)]
+    if isinstance(value, list):
+        return [r for v in value for r in _refs(v)]
+    return []
 
 
 def check_templates(runbook: dict) -> list[str]:
-    """Every {{ref}} must resolve to a slot or a capture defined by an earlier step."""
+    """Every {{ref}} must resolve to a declared slot.
+
+    This is the failure mode a synthesized runbook actually hits: TON-21 lifting a
+    concrete value into a slot it never declared. At replay that raises
+    SlotResolutionError mid-run - after earlier steps have already executed.
+    """
     errors: list[str] = []
-    known = {s["name"] for s in runbook.get("slots", [])}
+    declared = {s["name"] for s in runbook.get("slots", []) if "name" in s}
 
     for step in runbook.get("steps", []):
         sid = step.get("id", "?")
-        for field in TEMPLATED_FIELDS:
-            for ref in TEMPLATE.findall(str(step.get(field, ""))):
-                if ref not in known:
+        for field in ("arguments", "confirmation_prompt"):
+            for ref in _refs(step.get(field)):
+                if ref not in declared:
                     errors.append(
-                        f"step '{sid}'.{field}: {{{{{ref}}}}} is not a declared slot "
-                        f"and no earlier step captures it"
+                        f"step '{sid}'.{field}: {{{{{ref}}}}} is not a declared slot"
                     )
-        # A step's own capture only becomes available to LATER steps.
-        if cap := step.get("capture"):
-            known.add(cap)
     return errors
 
 
@@ -54,12 +70,13 @@ def check_invariants(runbook: dict) -> list[str]:
     irreversible = [s for s in runbook.get("steps", []) if s.get("irreversible")]
 
     for step in irreversible:
-        confirm = step.get("confirm", "")
-        # A confirm line with no templating names nothing specific.
-        if not TEMPLATE.search(confirm):
+        prompt = step.get("confirmation_prompt") or ""
+        # A readback with no templating names nothing specific - it is
+        # "Confirm this restaurant booking", which Invariant 1 exists to prevent.
+        if not TEMPLATE.search(prompt):
             errors.append(
-                f"step '{step.get('id')}': confirm names no specifics "
-                f"(no {{{{...}}}} refs) - Invariant 1 wants what/when/how much, "
+                f"step '{step.get('id')}': confirmation_prompt names no specifics "
+                f"(no {{{{slot}}}} refs) - Invariant 1 wants what/when/how many, "
                 f"not 'shall I proceed?'"
             )
     if len(irreversible) > 1:
