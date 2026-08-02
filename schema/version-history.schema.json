@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kp-hackathon/schema/version-history.schema.json",
+  "title": "Agent version history",
+  "type": "object",
+  "required": ["schemaVersion", "title", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "parentId", "name", "strategy", "summary", "status", "actor", "createdAt", "durationMinutes", "attempts", "fileChanges", "emails", "conversations", "moneySpent", "metrics", "lessons"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "parentId": { "type": ["string", "null"] },
+        "name": { "type": "string", "minLength": 1 },
+        "strategy": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["base", "winner", "promising", "stopped"] },
+        "actor": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "durationMinutes": { "type": "number", "minimum": 0 },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/attempt" } },
+        "fileChanges": { "type": "array", "items": { "$ref": "#/$defs/fileChange" } },
+        "emails": { "type": "array", "items": { "$ref": "#/$defs/email" } },
+        "conversations": { "type": "array", "items": { "$ref": "#/$defs/conversation" } },
+        "moneySpent": { "$ref": "#/$defs/money" },
+        "metrics": { "type": "array", "items": { "$ref": "#/$defs/metric" } },
+        "lessons": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "result", "status"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["succeeded", "failed", "learned"] }
+      }
+    },
+    "fileChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "additions", "deletions", "summary"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "additions": { "type": "integer", "minimum": 0 },
+        "deletions": { "type": "integer", "minimum": 0 },
+        "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "email": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to", "subject", "status"],
+      "properties": {
+        "to": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["drafted", "sent", "replied"] }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["with", "channel", "summary"],
+      "properties": {
+        "with": { "type": "string", "minLength": 1 },
+        "channel": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency", "breakdown"],
+      "properties": {
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "minLength": 3 },
+        "breakdown": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "value", "delta", "tone"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "value": { "type": "string", "minLength": 1 },
+        "delta": { "type": "string" },
+        "tone": { "enum": ["positive", "neutral", "negative"] }
+      }
+    }
+  }
+}

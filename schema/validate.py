@@ -1,4 +1,4 @@
-"""Validate runbooks and trajectories against the locked schemas.
+"""Validate runbooks, trajectories, and version-history artifacts.
 
 "It looks right" is not done. Run this before handing anything off:
 
@@ -115,6 +115,22 @@ def validate_dir(subdir: str, schema_name: str, extra_checks=None) -> tuple[int,
     return passed, len(files)
 
 
+def validate_file(path: Path, schema_name: str) -> tuple[int, int]:
+    schema = json.loads((SCHEMA_DIR / schema_name).read_text())
+    document = json.loads(path.read_text())
+    errors = [
+        f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}"
+        for e in Draft202012Validator(schema).iter_errors(document)
+    ]
+    if errors:
+        print(f"  FAIL {path.name}")
+        for error in errors:
+            print(f"       {error}")
+        return 0, 1
+    print(f"  ok   {path.name}")
+    return 1, 1
+
+
 def main() -> int:
     total_pass = total_all = 0
 
@@ -128,6 +144,10 @@ def main() -> int:
 
     print("\ntrajectories (schema/trajectory.schema.json)")
     p, n = validate_dir("trajectories", "trajectory.schema.json")
+    total_pass, total_all = total_pass + p, total_all + n
+
+    print("\nversion history (schema/version-history.schema.json)")
+    p, n = validate_file(ROOT / "demo" / "version-history.json", "version-history.schema.json")
     total_pass, total_all = total_pass + p, total_all + n
 
     print(f"\n{total_pass}/{total_all} valid")

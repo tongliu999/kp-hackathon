@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "title": "Founder GTM exploration",
+  "nodes": [
+    {
+      "id": "founder-v1", "parentId": null, "name": "Founder v1", "strategy": "Starting thesis", "summary": "A voice-first agent that learns repeatable company workflows from successful attempts.", "status": "base", "actor": "Founder agent", "createdAt": "2026-08-02T01:00:00Z", "durationMinutes": 18,
+      "attempts": [{"title":"Frame the wedge","result":"Selected high-friction operational tasks as the initial market.","status":"learned"}],
+      "fileChanges": [{"path":"strategy/founder-thesis.md","additions":84,"deletions":0,"summary":"Created the initial market and product thesis."}],
+      "emails": [], "conversations": [{"with":"Design partner group","channel":"Interview","summary":"Teams want proof, control, and an audit trail before autonomy."}],
+      "moneySpent": {"amount":12.4,"currency":"USD","breakdown":["Agent inference $8.20","Research tools $4.20"]},
+      "metrics": [{"label":"Interview signal","value":"8/10","delta":"strong","tone":"positive"},{"label":"Confidence","value":"62%","delta":"baseline","tone":"neutral"}],
+      "lessons": ["Trust is a product surface, not a compliance appendix.", "Branch histories make agent learning legible."]
+    },
+    {
+      "id": "healthcare", "parentId": "founder-v1", "name": "Healthcare", "strategy": "Regulated operations", "summary": "Test whether auditability and confirmation gates create a strong healthcare wedge.", "status": "promising", "actor": "Healthcare agent", "createdAt": "2026-08-02T01:20:00Z", "durationMinutes": 34,
+      "attempts": [{"title":"Map hospital workflows","result":"Prior authorization and scheduling ranked highest on pain and repetition.","status":"succeeded"}],
+      "fileChanges": [{"path":"verticals/healthcare.md","additions":122,"deletions":8,"summary":"Added buyer map, risks, and workflow shortlist."}],
+      "emails": [{"to":"ops@northstar-health.example","subject":"Workflow audit design partnership","status":"replied"}],
+      "conversations": [{"with":"Hospital operations lead","channel":"Call","summary":"Procurement needs an exportable action log and strict approval boundaries."}],
+      "moneySpent": {"amount":31.1,"currency":"USD","breakdown":["Agent inference $16.10","Contact data $15.00"]},
+      "metrics": [{"label":"Qualified workflows","value":"4","delta":"+4","tone":"positive"},{"label":"Sales cycle","value":"9–15 mo","delta":"slow","tone":"negative"}],
+      "lessons": ["Audit history resonates immediately, but procurement is slow."]
+    },
+    {
+      "id": "enterprise-pricing", "parentId": "healthcare", "name": "Enterprise Pricing", "strategy": "High ACV platform sale", "summary": "Package governance, audit logs, and reusable runbooks as an enterprise control plane.", "status": "promising", "actor": "Pricing agent", "createdAt": "2026-08-02T02:00:00Z", "durationMinutes": 27,
+      "attempts": [{"title":"Price anchoring","result":"$60k pilot anchored well against one contractor headcount.","status":"succeeded"},{"title":"Usage pricing","result":"Per-run pricing created budget anxiety.","status":"failed"}],
+      "fileChanges": [{"path":"pricing/enterprise.md","additions":96,"deletions":21,"summary":"Replaced usage pricing with annual platform tiers."}],
+      "emails": [{"to":"cfo@meridian-clinic.example","subject":"Pilot economics and controls","status":"sent"}],
+      "conversations": [{"with":"Healthcare CFO","channel":"Email","summary":"Asked for fixed cost, deployment limits, and an exit clause."}],
+      "moneySpent": {"amount":18.75,"currency":"USD","breakdown":["Agent inference $11.75","Benchmark report $7.00"]},
+      "metrics": [{"label":"Pilot ACV","value":"$60k","delta":"+$35k","tone":"positive"},{"label":"Budget clarity","value":"High","delta":"improved","tone":"positive"}],
+      "lessons": ["Sell predictable control, not token consumption."]
+    },
+    {
+      "id": "hospital-sales", "parentId": "healthcare", "name": "Hospital Sales", "strategy": "Design-partner outbound", "summary": "Lead with a narrow scheduling workflow and a visible safety boundary.", "status": "stopped", "actor": "Sales agent", "createdAt": "2026-08-02T02:05:00Z", "durationMinutes": 41,
+      "attempts": [{"title":"Cold outbound","result":"Compliance language earned opens but few meetings.","status":"failed"}],
+      "fileChanges": [{"path":"sales/hospital-sequence.md","additions":63,"deletions":14,"summary":"Tested a five-touch hospital operations sequence."}],
+      "emails": [{"to":"20 hospital operations leaders","subject":"A safer way to automate scheduling","status":"sent"}],
+      "conversations": [],
+      "moneySpent": {"amount":42.2,"currency":"USD","breakdown":["Agent inference $12.20","Verified contacts $30.00"]},
+      "metrics": [{"label":"Open rate","value":"46%","delta":"+12%","tone":"positive"},{"label":"Meeting rate","value":"1%","delta":"-3%","tone":"negative"}],
+      "lessons": ["Compliance earns attention but not urgency; lead with the workflow outcome."]
+    },
+    {
+      "id": "developers", "parentId": "founder-v1", "name": "Developers", "strategy": "Bottom-up adoption", "summary": "Turn trajectory capture and replay into a developer-native agent debugging product.", "status": "winner", "actor": "Developer agent", "createdAt": "2026-08-02T01:22:00Z", "durationMinutes": 29,
+      "attempts": [{"title":"Developer positioning","result":"Version history outperformed generic observability in five interviews.","status":"succeeded"}],
+      "fileChanges": [{"path":"verticals/developers.md","additions":138,"deletions":4,"summary":"Defined local-first workflow, personas, and wedge."}],
+      "emails": [{"to":"founders@agent-tools.example","subject":"Agent version history preview","status":"replied"}],
+      "conversations": [{"with":"Agent framework maintainer","channel":"Discord","summary":"Asked for a diff between two successful trajectories."}],
+      "moneySpent": {"amount":19.6,"currency":"USD","breakdown":["Agent inference $14.60","Community sponsorship $5.00"]},
+      "metrics": [{"label":"Activation intent","value":"72%","delta":"+21%","tone":"positive"},{"label":"Time to value","value":"6 min","delta":"-18 min","tone":"positive"}],
+      "lessons": ["Developers already think in branches, diffs, and replays."]
+    },
+    {
+      "id": "open-source", "parentId": "developers", "name": "Open Source", "strategy": "Community distribution", "summary": "Open the trajectory format and keep hosted collaboration as the paid layer.", "status": "promising", "actor": "OSS agent", "createdAt": "2026-08-02T02:12:00Z", "durationMinutes": 36,
+      "attempts": [{"title":"README launch","result":"A concrete trace example drove repository saves.","status":"succeeded"}],
+      "fileChanges": [{"path":"README.md","additions":74,"deletions":12,"summary":"Added a five-minute quickstart and trace screenshot."},{"path":"LICENSE","additions":21,"deletions":0,"summary":"Added Apache-2.0 license."}],
+      "emails": [],
+      "conversations": [{"with":"Early contributors","channel":"GitHub Discussions","summary":"Requested adapters for LangGraph and CrewAI."}],
+      "moneySpent": {"amount":9.35,"currency":"USD","breakdown":["Agent inference $9.35"]},
+      "metrics": [{"label":"Repo saves","value":"118","delta":"+118","tone":"positive"},{"label":"Contributors","value":"7","delta":"+7","tone":"positive"}],
+      "lessons": ["The artifact format is the adoption surface; integrations create pull."]
+    },
+    {
+      "id": "cli", "parentId": "developers", "name": "CLI", "strategy": "Fast local workflow", "summary": "Make branching, inspection, and replay feel like a familiar source-control loop.", "status": "winner", "actor": "CLI agent", "createdAt": "2026-08-02T02:15:00Z", "durationMinutes": 22,
+      "attempts": [{"title":"Command prototype","result":"Users completed first branch inspection without documentation.","status":"succeeded"}],
+      "fileChanges": [{"path":"src/cli/history.ts","additions":182,"deletions":0,"summary":"Implemented tree, inspect, and diff commands."}],
+      "emails": [],
+      "conversations": [{"with":"Five developer testers","channel":"Screen share","summary":"Four expected keyboard navigation and one asked for JSON output."}],
+      "moneySpent": {"amount":7.8,"currency":"USD","breakdown":["Agent inference $7.80"]},
+      "metrics": [{"label":"Task completion","value":"5/5","delta":"+2","tone":"positive"},{"label":"Median setup","value":"3m 12s","delta":"-68%","tone":"positive"}],
+      "lessons": ["Tree, inspect, and diff are enough for the first developer loop."]
+    },
+    {
+      "id": "marketing", "parentId": "founder-v1", "name": "Marketing", "strategy": "Demand generation", "summary": "Test whether visible agent branching can create a shareable product story.", "status": "promising", "actor": "Marketing agent", "createdAt": "2026-08-02T01:25:00Z", "durationMinutes": 31,
+      "attempts": [{"title":"Message matrix","result":"‘See every decision’ beat ‘autonomous workflows’ on clarity.","status":"succeeded"}],
+      "fileChanges": [{"path":"marketing/message-matrix.md","additions":104,"deletions":17,"summary":"Compared autonomy, learning, and auditability narratives."}],
+      "emails": [{"to":"newsletter@agent-builders.example","subject":"Pitch: Git history for agent work","status":"drafted"}],
+      "conversations": [{"with":"Growth advisor","channel":"Call","summary":"Recommended showing a visual branch story before explaining architecture."}],
+      "moneySpent": {"amount":15.2,"currency":"USD","breakdown":["Agent inference $10.20","Creative tools $5.00"]},
+      "metrics": [{"label":"Message clarity","value":"84%","delta":"+19%","tone":"positive"},{"label":"Share intent","value":"38%","delta":"+8%","tone":"positive"}],
+      "lessons": ["The branch picture explains the product faster than the phrase ‘agent memory.’"]
+    },
+    {
+      "id": "tiktok", "parentId": "marketing", "name": "TikTok", "strategy": "Short-form build stories", "summary": "Show three agents trying visibly different paths in a 25-second split-screen narrative.", "status": "promising", "actor": "Social agent", "createdAt": "2026-08-02T02:20:00Z", "durationMinutes": 48,
+      "attempts": [{"title":"Three-hook test","result":"The ‘watch agents disagree’ hook retained viewers longest.","status":"succeeded"}],
+      "fileChanges": [{"path":"marketing/tiktok-hooks.md","additions":57,"deletions":9,"summary":"Captured hooks, storyboard, and disclosure language."}],
+      "emails": [{"to":"creator@buildinpublic.example","subject":"Collab: agents disagree, then learn","status":"replied"}],
+      "conversations": [{"with":"Technical creator","channel":"DM","summary":"Asked for raw screen capture and a visible spend counter."}],
+      "moneySpent": {"amount":86.0,"currency":"USD","breakdown":["Creator test $60.00","Agent inference $11.00","Captions $15.00"]},
+      "metrics": [{"label":"3s retention","value":"71%","delta":"+16%","tone":"positive"},{"label":"Waitlist clicks","value":"44","delta":"+44","tone":"positive"}],
+      "lessons": ["Conflict is the hook; the learned runbook is the payoff."]
+    },
+    {
+      "id": "google-ads", "parentId": "marketing", "name": "Google Ads", "strategy": "High-intent capture", "summary": "Bid on agent observability and debugging intent with audit-history landing copy.", "status": "stopped", "actor": "Paid growth agent", "createdAt": "2026-08-02T02:22:00Z", "durationMinutes": 52,
+      "attempts": [{"title":"Search campaign","result":"Clicks were expensive and mostly research-stage.","status":"failed"}],
+      "fileChanges": [{"path":"marketing/search-ads.csv","additions":42,"deletions":3,"summary":"Logged keyword groups, copy, bids, and outcomes."}],
+      "emails": [],
+      "conversations": [{"with":"Two inbound leads","channel":"Chat","summary":"Both wanted general monitoring rather than branch replay."}],
+      "moneySpent": {"amount":240.55,"currency":"USD","breakdown":["Ad spend $225.00","Agent inference $15.55"]},
+      "metrics": [{"label":"Cost per lead","value":"$120.28","delta":"+$78","tone":"negative"},{"label":"Qualified leads","value":"0","delta":"flat","tone":"negative"}],
+      "lessons": ["Search demand is broad and expensive before the category is understood."]
+    }
+  ]
+}

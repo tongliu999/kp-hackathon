@@ -239,6 +239,23 @@ npm run rehearse -- --cold-video /absolute/path/to/cold-path.mp4
 This command never contacts a booking provider. The three-person stage
 rehearsal and a real book/cancel cycle remain manual acceptance checks.
 
+## Agent version history explorer
+
+The version-history UI makes branching agent work inspectable like source
+control. It renders the Founder v1 strategy tree and lets you select any node
+to inspect attempts, file changes, emails, conversations, spend, metrics, and
+lessons:
+
+```bash
+npm run history
+```
+
+Open `http://127.0.0.1:4173`. The demo data lives in
+`demo/version-history.json`; its stable contract is documented by
+`schema/version-history.schema.json` and enforced again at runtime before the
+graph renders. Live fan-out code can emit the same shape without changing the
+UI.
+
 This coordinator intentionally performs no bookings or other irreversible side
 effects. A real agent runner can implement `ColdTaskWorker` later while keeping
 the same lifecycle and callback contract.

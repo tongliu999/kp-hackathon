@@ -5,9 +5,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/booking/__tests__/*.test.js",
+    "test": "node --test src/booking/__tests__/*.test.js src/version_history/__tests__/*.test.js",
     "reset": "node src/index.js",
-    "rehearse": "node scripts/rehearse.mjs"
+    "rehearse": "node scripts/rehearse.mjs",
+    "history": "node scripts/version-history-server.mjs"
   },
   "author": "",
   "license": "MIT",
