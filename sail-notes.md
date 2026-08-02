@@ -152,15 +152,69 @@ But if the chosen booking provider has an HTTP API, this is dramatically cleaner
 automation and would simplify TON-8 substantially. Worth 10 minutes of Talia's time when picking
 the provider.
 
+## Persistence across a real disconnect — TON-7 [VERIFIED]
+
+Settles the *generic* half of the pause/resume question. Measured against prod with `demo.py`
+(worktree `effervescent-soaring-truffle`): phase 1 boots a box, writes state, sleeps it and
+exits; **phase 2 is a separate OS process** handed nothing but the sailbox id. A handle going
+out of scope inside one process would have proved nothing.
+
+Three things had to hold, and all three did on every run:
+
+| check | how |
+|---|---|
+| **same box** | `created_at` from the control-plane snapshot is unchanged |
+| **disk survived** | a token written via `fs.write` **and** a second written by a shell *inside* the box |
+| **plumbing** | `exit 7`, with stdout and stderr split correctly |
+
+`created_at` is the load-bearing one — without it "reconnect" could quietly be a brand-new box
+and every other check would still pass. The two write paths matter because they fail
+independently, and downstream the writes that count are the *agent's* own.
+
+**A bare `sleep()` → `resume()` needs no explicit `checkpoint()`.** State came back *warm* —
+same `/proc/sys/kernel/random/boot_id`, so memory was restored, not just disk. The `sleep()`
+docstring explains why: it checkpoints on the way down. The [DOC] *"may come back cold"* caveat
+never fired here.
+
+### Measured [VERIFIED] — n=5 each
+
+| | median | min | max |
+|---|---|---|---|
+| `create()` — first box in a **fresh process** | 937 ms | 779 | 1587 |
+| `create()` — later boxes, **warm process** | **498 ms** | 417 | 762 |
+| wake from `sleep()` | **509 ms** | 461 | 576 |
+| `run()` round-trip | **95 ms** | 94 | 99 |
+| `terminate()` | ~900 ms | 888 | 980 |
+
+**Wake costs about the same as a cold create (~0.5s).** Parking a box asleep is therefore free
+*and* fast — no reason to keep one hot between rehearsals.
+
+**~400ms of the first boot is one-time SDK transport setup** — boot #1 836ms, then 409 / 442 /
+588 / 527 in the same process. A long-running orchestrator pays that once, so budget **~0.5s
+per box**, not ~1s.
+
+### What this means for the team
+
+**Infrastructure is not what makes "give me a few minutes" take minutes.** At 95ms per command,
+a 20-step warm replay is ~2s of Sail time. The cold path's minutes are all agent work.
+
+**Talia (TON-8):** the layer *under* your auth is solid — disk and memory both survive a
+sleep/resume from a fully dead client. What remains unproven is only whether the **provider**
+still accepts the session, which is the half that needs a real provider to test.
+
 ## Still open
 
-Answered above: process survival, fork-vs-checkpoint, N=3 concurrency, create timing.
+Answered above: process survival, fork-vs-checkpoint, N=3 concurrency, create timing, and
+disk/memory survival across a disconnect (TON-7).
 
 Remaining, and all of it is the **auth** half — it needs a chosen booking provider, so it belongs
 with Talia's TON-8 rather than here:
 
 - **[OPEN]** Does a real browser login survive `pause()` → `resume()`? *This is the half that sits
   on the critical path* — it's the warm-replay story and the reason for choosing Sail.
+  **Narrowed by TON-7:** the box layer is settled — disk *and* memory survive sleep/resume from a
+  dead client. What's left is purely whether the provider re-accepts the session, so this is now a
+  provider question, not a Sail question.
 - **[OPEN]** Does a login survive a fork, and **does the child get a different egress IP?** Not
   stated anywhere in the docs. Only matters if the provider pins sessions to IP or fingerprints
   the device.
@@ -184,7 +238,14 @@ Parking the warm box between rehearsals is free.
   `checkpoint_generation`, `expires_at`, `status`.
 - [DOC] A child **always** comes up cold when it **mounts a volume** → avoid `volumes=` on boxes
   you intend to fork.
-- [VERIFIED] `create(timeout=600)` defaults to 10 minutes — creation is genuinely slow.
+- [VERIFIED] `create(timeout=600)` defaults to 10 minutes. That's the *deadline*, not the
+  expectation — measured creation is ~0.5s warm / ~0.9s on a fresh process (TON-7, n=5).
+- **`create()` returns a bare handle** [VERIFIED] — `created_at`, `started_at` and `image_id` are
+  all `None` on the object it hands back. Snapshot fields only populate via `Sailbox.get(id)`.
+- **No `/etc/machine-id`** in the Debian 12 base image [VERIFIED], and `hostname` is literally
+  `(none)`. There is no stable OS-level box identity — use the control plane's `created_at`.
+  `/proc/sys/kernel/random/boot_id` exists but is per-*boot*, making it a warm-vs-cold signal
+  rather than an identity one.
 - `run()` with a string goes through `/bin/sh -lc`; pass a list to exec directly.
 - Namespace boxes by app so concurrent sessions don't terminate each other's work:
   `app=branch-research` (research session) vs `app=spine` (TON-7 session).
