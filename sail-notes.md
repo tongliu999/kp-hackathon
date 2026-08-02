@@ -376,11 +376,36 @@ running, CDP still answering, and **both ingress listeners survived with identic
 This extends TON-7's finding to a live browser: the Sail layer is not what will break warm
 replay. What remains provider-specific is whether the *site* still accepts the session.
 
-### fork() and egress IP [VERIFIED] — settles a previously-open question
+### fork() [VERIFIED]
 
-A forked child **inherits both the running (detached) chromium and the on-disk profile**, and
-gets a **different egress IP** (54.191.8.10 vs parent 54.202.28.162). So branches do not share
-the parent's outbound address — which matters only if a provider pins sessions to IP.
+A forked child **inherits both the running (detached) chromium and the on-disk profile** —
+`/root/booking/profile/Default/Cookies` was present in the child and its chromium was already
+up, with no relaunch.
+
+### Egress IP is NOT stable — it rotates per connection [VERIFIED]
+
+**Six consecutive `curl https://ifconfig.me` from one running box, no pause, returned four
+distinct addresses:** 34.212.113.139, 35.93.154.169, 34.215.198.45, 34.217.94.94. Add
+54.202.28.162 and 54.191.8.10 from other samples. All AWS us-west-2 — this is a NAT pool, not
+a per-box address.
+
+**This corrects an earlier reading in this document.** A forked child was observed with a
+different egress IP from its parent and that was attributed to forking. It is not fork-specific:
+the same box gives different IPs between two ordinary requests. Any parent-vs-child IP
+comparison is measuring the pool, not the fork.
+
+Two consequences:
+
+- **"Does the child get a different egress IP?" is the wrong question.** If a provider pinned a
+  session to an IP, the session would break between two consecutive page loads for *everyone*,
+  forked or not. So IP pinning is either not in play or is fatal generally — it is not a
+  branch-specific risk.
+- **It strengthens the OpenTable finding.** Those 403s arrived across many different source
+  addresses, so the block is at range/ASN level, not a reputation score on one address. Nothing
+  is gained by retrying to get "a better IP".
+
+Corollary for anything that allowlists by IP: an outbound allowlist keyed to a Sailbox's address
+cannot work. (Sail *ingress* allowlists are unaffected — those key on the caller's IP.)
 
 ## Still open
 
@@ -397,8 +422,9 @@ in them — and both are blocked on a real logged-in session, so they belong wit
   its processes and its ingress listeners). What is left is only whether the *site* re-accepts
   the session.
 - **[OPEN]** Does a **provider session** survive a fork? The mechanics are settled — the child
-  inherits the process and the profile, and gets a **different egress IP** (TON-8 above). What
-  is unknown is whether the site accepts a session arriving from that new address.
+  inherits the process and the profile (TON-8 above). The egress-IP half of this question is
+  **withdrawn**: IPs rotate per connection for every box, so there is no fork-specific address
+  change to worry about.
 - **[OPEN]** Concurrency ceiling above 3.
 
 Test the first two against the *actual* provider, not a generic site — success means "the provider
