@@ -20,10 +20,13 @@ sailbox = [
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
+  # schema/validate.py has always imported this; it was in no dependency list.
+  "jsonschema>=4",
 ]
 
 [project.scripts]
 runbook-cold-task-demo = "runbook_voice.cold_task_demo:main"
+runbook-distill = "runbook_voice.distiller:main"
 runbook-sailbox-demo = "runbook_voice.sailbox_demo:main"
 runbook-voice-echo = "runbook_voice.voice_loop:main"
 
