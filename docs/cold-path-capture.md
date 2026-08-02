@@ -9,6 +9,26 @@ Request used — verbatim from `demo/demo_config.json`, as the run of show requi
 
 > Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.
 
+## Take 1 is the chosen capture — record the replay, not a live run
+
+Take 1's real output is preserved in `demo/cold-capture/` (trajectories, branch
+search log, judge log, synthesized runbook). To film it:
+
+```
+PYTHONPATH=src .venv/bin/python scripts/replay_cold_capture.py
+```
+
+**42 seconds, deterministic, fits the cue sheet's 0:20–1:10 slot.** Every angle,
+command, judge verdict and slot it prints is read from that captured run —
+nothing is synthesized for the camera. `--speed` adjusts pace; `--instant`
+dumps the content for checking.
+
+Filming the replay rather than a fresh live run is the right trade, and not
+only for time: a live run takes ~4.5 minutes and roughly one in two produces
+nothing distillable (see the variance table below). The run of show already
+specifies the cold pass as a recording, so replaying a real captured run is
+exactly what it asks for.
+
 ## Status: the full chain now runs
 
 `docs/demo-run-of-show.md` says the cold video must show, in order:
