@@ -20,6 +20,7 @@ dev = [
 ]
 
 [project.scripts]
+runbook-cold-task-demo = "runbook_voice.cold_task_demo:main"
 runbook-voice-echo = "runbook_voice.voice_loop:main"
 
 [tool.setuptools.packages.find]
