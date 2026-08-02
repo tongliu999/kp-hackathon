@@ -103,14 +103,25 @@ def check(_args) -> int:
     # Actually invoke the bridge rather than checking that files exist. This is
     # the seam between Python and JavaScript; "the .mjs is on disk" proves
     # nothing about whether it runs.
+    # Probe in stub mode: the question is "does the Python/JavaScript seam work",
+    # which needs no Sailbox. Real-mode reachability is a separate concern and is
+    # gated by BOOKING_SAILBOX below.
     try:
         open_refs = asyncio.run(
-            NodeBookingRunner(store_path=BOOKINGS).execute("booking.list_open", {})
+            NodeBookingRunner(stub=True, store_path=BOOKINGS).execute("booking.list_open", {})
         )
         results.append(_check("booking bridge responds", True,
                               f"{len(open_refs.get('open', []))} open booking(s)"))
     except BookingBridgeError as exc:
         results.append(_check("booking bridge responds", False, str(exc)))
+
+    # Real bookings need an explicit opt-in to a named box. Absent it the bridge
+    # refuses, which is correct - but it should be visible in preflight rather
+    # than discovered at the moment someone runs --live.
+    box = os.environ.get("BOOKING_SAILBOX")
+    results.append(_check("BOOKING_SAILBOX — REQUIRED for --live", bool(box),
+                          box or "unset: --live will refuse. Set BOOKING_SAILBOX=booking",
+                          fatal=False))
 
     # Stub mode imports local files only, but real mode delegates into the
     # Sailbox over the Sail SDK — so a missing node_modules is invisible right up
