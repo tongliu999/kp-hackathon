@@ -40,9 +40,36 @@ function branchStatus(branch, run) {
 }
 
 function runStatus(run) {
+  if (run.workflowStatus) return run.workflowStatus;
   if (run.winner) return "judged";
-  if (run.branches.every((branch) => branch.success_signal)) return "complete";
+  if (run.branches.length && run.branches.every((branch) => branch.success_signal)) return "complete";
   return "mixed";
+}
+
+function workflowHistory(run) {
+  return {
+    id: `workflow:${run.id}`,
+    workflowId: run.id,
+    task: run.request,
+    source: "live",
+    path: "live fan-out",
+    createdAt: run.startedAt,
+    winner: null,
+    branches: [],
+    workflowStatus: run.status,
+    expectedBranches: 3,
+  };
+}
+
+function upsertWorkflowHistory(run, { select = false } = {}) {
+  if (run.task !== "fanout" || !run.request) return;
+  const liveRun = workflowHistory(run);
+  const index = histories.findIndex((history) => history.id === liveRun.id);
+  if (index === -1) histories.unshift(liveRun);
+  else histories[index] = liveRun;
+  document.querySelector("#run-count").textContent = String(histories.length);
+  if (select || selectedRun?.id === liveRun.id) selectRun(liveRun);
+  else renderRunList();
 }
 
 function setConsoleState(status, label) {
@@ -66,6 +93,17 @@ async function loadHistory({ preferPrompt } = {}) {
   histories = payload.runs;
   document.querySelector("#run-count").textContent = String(histories.length);
   renderRunList();
+
+  const activeWorkflow = histories.find(
+    (run) => run.workflowId && (run.workflowStatus === "running" || run.workflowStatus === "stopping")
+  );
+  if (activeWorkflow && !activeRunId) {
+    activeRunId = activeWorkflow.workflowId;
+    lastFanoutPrompt = activeWorkflow.task;
+    runLabel.textContent = "Live 3-way Sail fan-out";
+    setConsoleState(activeWorkflow.workflowStatus, activeWorkflow.workflowStatus === "stopping" ? "Stopping safely" : "Running");
+    pollTimer = window.setTimeout(pollRun, 100);
+  }
 
   const preferred = preferPrompt
     ? histories.find((run) => run.task === preferPrompt)
@@ -94,7 +132,10 @@ function renderRunList() {
     top.append(element("span", `run-status ${runStatus(run)}`, runStatus(run)));
     button.append(top, element("strong", "", compact(run.task, 68)));
     const meta = element("span", "run-list-meta");
-    meta.append(element("span", "", `${run.branches.length} branches`));
+    const branchMeta = run.workflowStatus
+      ? `${run.expectedBranches ?? 3} branches starting`
+      : `${run.branches.length} branches`;
+    meta.append(element("span", "", branchMeta));
     meta.append(element("span", "", new Date(run.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })));
     button.append(meta);
     button.addEventListener("click", () => selectRun(run));
@@ -109,8 +150,8 @@ function selectRun(run) {
   const meta = document.querySelector("#selected-meta");
   meta.replaceChildren(
     element("span", `source-chip ${run.source}`, run.source),
-    element("span", "", `${run.branches.length} trajectories`),
-    element("span", "", run.winner ? `winner ${run.winner}` : "not judged"),
+    element("span", "", run.workflowStatus ? `${run.expectedBranches ?? 3} branches starting` : `${run.branches.length} trajectories`),
+    element("span", "", run.workflowStatus ?? (run.winner ? `winner ${run.winner}` : "not judged")),
     element("span", "", run.path)
   );
   renderRunList();
@@ -135,6 +176,20 @@ function renderBranchCanvas() {
   graph.append(promptNode);
 
   const branches = element("div", "branch-row");
+  if (selectedRun.workflowStatus && !selectedRun.branches.length) {
+    for (let index = 0; index < (selectedRun.expectedBranches ?? 3); index += 1) {
+      const node = element("div", "branch-node live-branch");
+      const heading = element("span", "branch-heading");
+      heading.append(element("span", "branch-id", `b${index}`));
+      heading.append(element("span", "branch-state running", selectedRun.workflowStatus));
+      node.append(heading);
+      node.append(element("span", "branch-angle", "Agent trajectory is starting…"));
+      const progress = element("span", "live-progress");
+      progress.append(element("i"), element("i"), element("i"));
+      node.append(progress);
+      branches.append(node);
+    }
+  }
   selectedRun.branches.forEach((branch) => {
     const status = branchStatus(branch, selectedRun);
     const button = element("button", `branch-node ${status}`);
@@ -183,6 +238,13 @@ function renderRunSummary() {
   const header = inspectorHeader("Prompt overview", "RUN SUMMARY", runStatus(selectedRun));
   header.append(element("p", "trace-summary", selectedRun.task));
   inspector.append(header);
+  if (selectedRun.workflowStatus) {
+    const live = element("section", "live-run-summary");
+    live.append(element("strong", "", "Fan-out in progress"));
+    live.append(element("p", "", "Three independent agents are starting. This prompt will stay in the sidebar, and completed trajectories will replace these live placeholders automatically."));
+    inspector.append(live);
+    return;
+  }
   const grid = element("div", "run-metric-grid");
   const totalSteps = selectedRun.branches.reduce((sum, branch) => sum + branch.steps.length, 0);
   const successes = selectedRun.branches.filter((branch) => branch.success_signal).length;
@@ -284,6 +346,7 @@ async function pollRun() {
     runLabel.textContent = run.label;
     runOutput.textContent = run.output;
     runOutput.scrollTop = runOutput.scrollHeight;
+    upsertWorkflowHistory(run);
     if (run.status === "running" || run.status === "stopping") {
       setConsoleState(run.status, run.status === "stopping" ? "Stopping safely" : "Running");
       pollTimer = window.setTimeout(pollRun, 700);
@@ -329,6 +392,7 @@ async function startTask(task) {
     activeRunId = run.id;
     runLabel.textContent = run.label;
     runOutput.textContent = run.output;
+    upsertWorkflowHistory(run, { select: task === "fanout" });
     await pollRun();
   } catch (error) {
     runOutput.textContent = `[console] ${error.message}`;

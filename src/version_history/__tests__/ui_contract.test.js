@@ -40,6 +40,16 @@ test("inspector renders every requested audit category", () => {
   assert.match(app, /data-task/);
 });
 
+test("fan-out prompts appear live in history before trajectories finish", () => {
+  assert.match(server, /workflowStatus: run\.status/);
+  assert.match(server, /id: `workflow:\$\{run\.id\}`/);
+  assert.match(server, /expectedBranches: 3/);
+  assert.match(app, /upsertWorkflowHistory/);
+  assert.match(app, /activeWorkflow\.workflowId/);
+  assert.match(app, /Fan-out in progress/);
+  assert.match(app, /Agent trajectory is starting/);
+});
+
 test("console server uses a fixed task allowlist without a shell", () => {
   for (const task of ["fanout", "judge", "distill", "validate", "demo-check", "rehearse", "tests"]) {
     assert.ok(server.includes(`task === "${task}"`), task);

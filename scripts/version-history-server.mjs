@@ -125,11 +125,29 @@ async function findTrajectoryRuns(directory, source, depth = 0) {
 
 async function listHistory() {
   historyRegistry.clear();
-  const records = [
+  const savedRecords = [
     ...(await findTrajectoryRuns(path.join(root, "runs"), "live")),
     ...(await findTrajectoryRuns(path.join(root, "demo", "cold-capture"), "recorded")),
   ];
-  return records
+  const activeRecords = [...runs.values()]
+    .filter(
+      (run) =>
+        run.task === "fanout" &&
+        (run.status === "running" || run.status === "stopping")
+    )
+    .map((run) => ({
+      id: `workflow:${run.id}`,
+      workflowId: run.id,
+      task: run.request,
+      source: "live",
+      path: "live fan-out",
+      createdAt: run.startedAt,
+      winner: null,
+      branches: [],
+      workflowStatus: run.status,
+      expectedBranches: 3,
+    }));
+  return [...activeRecords, ...savedRecords]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map(({ directory: _directory, ...record }) => record);
 }
@@ -146,6 +164,7 @@ function taskCommand(task, input) {
     if (!request || request.length > 1_000) throw new Error("request must be 1–1,000 characters");
     return {
       label: "Live 3-way Sail fan-out",
+      request,
       command: "python",
       args: [
         "-m",
@@ -214,6 +233,7 @@ function publicRun(run) {
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     exitCode: run.exitCode,
+    request: run.request,
   };
 }
 
@@ -235,6 +255,7 @@ function startRun(task, input) {
   const run = {
     id: randomUUID(),
     task,
+    request: spec.request ?? null,
     label: spec.label,
     status: "running",
     output: `[console] Starting ${spec.label}…\n`,
