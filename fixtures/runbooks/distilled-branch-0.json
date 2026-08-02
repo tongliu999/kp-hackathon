@@ -74,7 +74,7 @@
         "time": "{{time}}"
       },
       "irreversible": true,
-      "confirmation_prompt": "Table for {{party_size}} at a {{cuisine}} restaurant on {{date}} at {{time}}. Should I confirm?"
+      "confirmation_prompt": "Table for {{party_size}} {{cuisine}} on {{date}} at {{time}}. Should I confirm?"
     }
   ]
 }

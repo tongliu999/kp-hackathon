@@ -9,16 +9,27 @@ Request used — verbatim from `demo/demo_config.json`, as the run of show requi
 
 > Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.
 
-## The capture is not yet completable
+## Status: the full chain now runs
 
 `docs/demo-run-of-show.md` says the cold video must show, in order:
 
 > Three isolated branches, pairwise comparisons, chosen trace, **synthesized
 > runbook, and saved runbook**.
 
-The first three happen. The last two **cannot currently be produced from a real
-cold run** — see "The M2 → M3 break" below. Recording now would capture a clip
-that stops two beats short of the point the demo is making.
+All five now happen. The last two were blocked by a vocabulary mismatch between
+the branch agent and the distiller — described under "The M2 → M3 break" below,
+and since fixed. Reproduce the whole chain with:
+
+```
+PYTHONPATH=src .venv/bin/python -m runbook_voice.branch_search_demo "<request>" --out runs/ton23
+PYTHONPATH=src .venv/bin/python -m runbook_voice.judge_check --fixtures runs/ton23/<job>  --runs 3
+PYTHONPATH=src .venv/bin/python -m runbook_voice.distiller runs/ton23/<job>/b1.json -o runs/ton23/synthesized_runbook.json
+```
+
+**M3's exit criterion is met:** the same request that took ~4.5 minutes cold is
+served from the synthesized runbook in **0.1s** — retrieved by the matcher and
+replayed through the real executor and confirm gate. Booking is stubbed only
+because TON-8's provider login is still outstanding.
 
 ## Timings, for the voiceover
 
@@ -92,27 +103,48 @@ it. Until it is resolved, **M3's exit criterion — the same request being slow
 then instant — cannot be met from a real cold run**, because the synthesized
 runbook at the middle of it never gets produced.
 
-### Options, for whoever owns TON-21
+### How it was fixed
 
-1. **Teach the distiller the shell vocabulary** — lift slots from the request
-   text, corroborated by their appearance in commands/URLs rather than in form
-   writes. Keeps branches as they are. Note this weakens the property the
-   distiller deliberately protects: it currently refuses to invent a slot that
-   no written value can trace back to the request, precisely so a runbook cannot
-   be built that books one hardcoded restaurant forever. Any change here should
-   preserve that refusal, not delete it.
-2. **Give branches browser tools** so they emit `goto`/`fill`. Truer to the
-   fixtures, but branch boxes have no browser today, and it enlarges the surface
-   Invariant 1 has to guard.
-3. **Accept a hand-written runbook for the demo** and do not claim the cold run
-   synthesized it. Cheapest, and honest only if nobody says "and it wrote this".
+`_lift_from_request` handles research trajectories; browser trajectories keep the
+strict path unchanged. Which one applies is decided by the trajectory's shape,
+not by falling back when the first one returns nothing.
 
-This is a design call, not a bug fix, which is why it is written up rather than
-patched here.
+**What was deliberately not done:** per-slot corroboration was not faked.
+Substring-searching commands for each value looks rigorous and is noise — on the
+real trajectory `\b2\b` matches the `<h2` inside a grep pattern, which would
+"prove" a party size of two from an HTML tag. A check that can be passed by
+accident is worse than an absent one, because it reads as evidence. Observations
+and final answers are excluded for the same reason: they restate the task in the
+agent's own words, so finding a value there proves only that the agent was told
+it.
+
+Two properties hold instead, and they are what keep it honest:
+
+- **Only values the request mentioned become slots**, so the "Ristorante
+  Adriatico" failure remains impossible — that refusal still fires, and is
+  still tested.
+- **The run must have pursued this request** — at least one request value has to
+  appear in what the branch actually executed. Otherwise a trajectory that
+  solved a different task could donate its slots.
+
+Concrete values still cannot reach the document by any path: `_arguments` emits
+only `{{slot}}` templates and `_verify` rejects leaked mechanics.
+
+### Two things the first real trajectory exposed
+
+- **The vocabulary had no `city` slot**, so the distilled runbook declared four
+  slots while the dialogue collects five. The executor fail-closes on unknown
+  slots, so replay died on `unknown slots: city` — M3's output was not drivable
+  by M1's dialogue. Added, captured positionally after "in" rather than from a
+  list of known cities.
+- **The readback said "at a {{cuisine}} restaurant"**, which speaks as "a
+  Italian restaurant". The article cannot be chosen at distill time because the
+  value is a template, so it was dropped rather than guessed.
 
 ## Still to do before this can be recorded
 
-- Resolve the break above so a synthesized + saved runbook actually appears.
 - TON-20 (M2 proof) formally closed — this run is its evidence.
 - The callback-speaking beat, which this capture did not exercise.
 - The recording itself: a human with a screen recorder, cut to under a minute.
+- Optionally re-run the cold path once more for a visually clean take; the
+  chain is now repeatable end to end.
