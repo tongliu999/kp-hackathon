@@ -56,7 +56,8 @@ test("fan-out prompts appear live in history before trajectories finish", () => 
   assert.match(server, /metrics\.json/);
   assert.match(server, /tree\.json/);
   assert.match(app, /upsertWorkflowHistory/);
-  assert.match(app, /activeWorkflow\.workflowId/);
+  assert.match(app, /activeWorkflows/);
+  assert.match(app, /pollRun\(tracked\.id\)/);
   assert.match(app, /parent choosing up to/);
   assert.match(app, /checkpoint selected/);
   assert.match(app, /distilling the full winning path/);
@@ -82,11 +83,21 @@ test("console server uses a fixed task allowlist without a shell", () => {
     assert.ok(!html.includes(`data-task="${task}"`), task);
   }
   assert.match(server, /shell: false/);
-  assert.match(server, /already running/);
+  assert.match(server, /MAX_CONCURRENT_RUNS = 4/);
+  assert.match(server, /run capacity reached/);
   assert.match(server, /kill\("SIGINT"\)/);
   assert.match(server, /\/api\/history/);
   assert.ok(server.includes("/^b\\d+\\.json$/"));
   assert.ok(server.includes('"runbook_voice.distiller"'));
+});
+
+test("console supports bounded concurrent runs without disabling prompt entry", () => {
+  assert.match(app, /const activeRuns = new Map/);
+  assert.match(app, /const pollTimers = new Map/);
+  assert.match(app, /pollRun\(run\.id\)/);
+  assert.match(app, /activeRuns\.size >= MAX_CONCURRENT_RUNS/);
+  assert.doesNotMatch(app, /button\.disabled = busy/);
+  assert.match(app, /run\$\{runningCount === 1 \? "" : "s"\} active/);
 });
 
 test("console exposes completed agents and routes matching prompts to warm replay", () => {
@@ -105,7 +116,7 @@ test("console exposes completed agents and routes matching prompts to warm repla
   assert.match(app, /runMatchedAgent/);
   assert.match(app, /renderAgentActiveRun/);
   assert.match(app, /Agent running/);
-  assert.match(app, /View run/);
+  assert.match(app, /View →/);
   assert.match(app, /prefilledSlots/);
   assert.match(app, /inputSource/);
   assert.match(server, /\/api\/agents\/match/);

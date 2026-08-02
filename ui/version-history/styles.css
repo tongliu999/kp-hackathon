@@ -192,8 +192,9 @@ button { cursor: pointer; }
 .warm-path-badge span { margin-right: 4px; color: var(--acid); font-size: 16px; }
 .new-agent-button { min-height: 39px; padding: 0 15px; border: 1px solid #708a3e; border-radius: 7px; background: var(--acid); color: #10130d; font: 9px var(--mono); font-weight: 800; white-space: nowrap; }
 .new-agent-button:hover { filter: brightness(1.06); }
-.agent-active-run { margin: 0 8px 8px; padding: 11px; display: grid; gap: 6px; border: 1px solid #625136; border-radius: 7px; background: linear-gradient(125deg,rgba(255,154,98,.09),#141715); }
-.agent-active-run.hidden { display: none; }
+.agent-active-runs { max-height: 270px; margin: 0 8px 8px; display: grid; gap: 6px; overflow-y: auto; }
+.agent-active-runs.hidden { display: none; }
+.agent-active-run { padding: 11px; display: grid; gap: 6px; border: 1px solid #625136; border-radius: 7px; background: linear-gradient(125deg,rgba(255,154,98,.09),#141715); }
 .agent-active-run .active-run-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .agent-active-run .active-run-state { display: inline-flex; align-items: center; gap: 6px; color: var(--orange); font: 7px var(--mono); text-transform: uppercase; }
 .agent-active-run .active-run-state::before { content:""; width: 6px; height: 6px; display: block; border-radius: 50%; background: currentColor; animation: pulse 1.1s ease infinite; }
@@ -205,7 +206,9 @@ button { cursor: pointer; }
 .agent-active-run.failed .active-run-state::before,.agent-active-run.cancelled .active-run-state::before { animation: none; }
 .agent-active-run strong { color: #e0e2dc; font-size: 9px; line-height: 1.45; }
 .agent-active-run p { margin: 0; color: var(--muted); font: 8px/1.45 var(--mono); }
-.agent-active-run button { justify-self: start; padding: 5px 7px; border: 1px solid #4a504b; border-radius: 4px; background: #111412; color: var(--acid); font: 7px var(--mono); }
+.agent-active-run .active-run-actions { display: flex; gap: 5px; }
+.agent-active-run button { padding: 5px 7px; border: 1px solid #4a504b; border-radius: 4px; background: #111412; color: var(--acid); font: 7px var(--mono); }
+.agent-active-run button.danger { color: var(--red); }
 .agent-active-run button:disabled { color: var(--faint); opacity: .65; cursor: default; }
 .agent-match-message { min-height: 0; padding: 0 26px; overflow: hidden; border-bottom: 0 solid var(--line); background: rgba(98,226,176,.065); color: var(--mint); font: 9px/1.55 var(--mono); transition: padding .15s ease; }
 .agent-match-message:not(:empty) { min-height: 42px; padding-block: 13px; border-bottom-width: 1px; }

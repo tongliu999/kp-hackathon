@@ -20,8 +20,11 @@ let selectedBranch = null;
 let selectedAgent = null;
 let activeRunId = null;
 let activeRunTask = null;
-let pollTimer = null;
-let lastFanoutPrompt = null;
+const activeRuns = new Map();
+const pollTimers = new Map();
+const agentRunRecords = new Map();
+const MAX_CONCURRENT_RUNS = 4;
+let pendingRunSequence = 0;
 let selectedAgentPrefill = {};
 let selectedAgentRequest = "";
 let mediaRecorder = null;
@@ -137,49 +140,74 @@ function upsertWorkflowHistory(run, { select = false } = {}) {
   else renderRunList();
 }
 
-function renderAgentActiveRun(run) {
-  if (!run || run.task !== "replay") {
+function renderAgentActiveRuns() {
+  const ordered = [...agentRunRecords.values()]
+    .sort((a, b) => String(b.startedAt ?? "").localeCompare(String(a.startedAt ?? "")));
+  const records = [
+    ...ordered.filter((run) => run.status === "running" || run.status === "stopping"),
+    ...ordered.filter((run) => run.status !== "running" && run.status !== "stopping").slice(0, 4),
+  ];
+  if (!records.length) {
     agentActiveRun.replaceChildren();
-    agentActiveRun.className = "agent-active-run hidden";
+    agentActiveRun.className = "agent-active-runs hidden";
     return;
   }
-  agentActiveRun.className = `agent-active-run ${run.status}`;
-  const heading = element("div", "active-run-heading");
-  heading.append(
-    element("span", "active-run-state", run.status === "succeeded" ? "Agent completed" : run.status === "running" ? "Agent running" : run.status),
-    element("span", "run-source", run.inputSource ?? "typed")
-  );
-  const view = element("button", "", run.id ? "View run →" : "Starting…");
-  view.type = "button";
-  view.disabled = !run.id;
-  view.addEventListener("click", () => {
-    switchWorkspace("runs");
-    const history = histories.find(
-      (item) => item.workflowId === run.id || item.id === `workflow:${run.id}` || item.id === `replay:${run.id}`
+  agentActiveRun.className = "agent-active-runs";
+  const cards = records.map((run) => {
+    const card = element("article", `agent-active-run ${run.status}`);
+    const heading = element("div", "active-run-heading");
+    heading.append(
+      element("span", "active-run-state", run.status === "succeeded" ? "Agent completed" : run.status === "running" ? "Agent running" : run.status),
+      element("span", "run-source", run.inputSource ?? "typed")
     );
-    if (history) selectRun(history);
+    const actions = element("div", "active-run-actions");
+    const view = element("button", "", run.id ? "View →" : "Starting…");
+    view.type = "button";
+    view.disabled = !run.id;
+    view.addEventListener("click", () => {
+      switchWorkspace("runs");
+      const history = histories.find(
+        (item) => item.workflowId === run.id || item.id === `workflow:${run.id}` || item.id === `replay:${run.id}`
+      );
+      if (history) selectRun(history);
+    });
+    actions.append(view);
+    if (run.id && (run.status === "running" || run.status === "stopping")) {
+      const stop = element("button", "danger", "Stop");
+      stop.type = "button";
+      stop.addEventListener("click", () => cancelRun(run.id));
+      actions.append(stop);
+    }
+    card.append(
+      heading,
+      element("strong", "", compact(run.request || run.label, 78)),
+      element("p", "", `${run.agentId} · ${run.parentPhase ?? "starting saved runbook"}`),
+      actions
+    );
+    return card;
   });
-  agentActiveRun.replaceChildren(
-    heading,
-    element("strong", "", compact(run.request || run.label, 78)),
-    element("p", "", `${run.agentId} · ${run.parentPhase ?? "starting saved runbook"}`),
-    view
-  );
+  agentActiveRun.replaceChildren(...cards);
 }
 
 function setConsoleState(status, label) {
+  const runningCount = activeRuns.size;
+  if (runningCount) {
+    status = "running";
+    label = `${runningCount}/${MAX_CONCURRENT_RUNS} run${runningCount === 1 ? "" : "s"} active`;
+  }
   consoleState.className = `console-state ${status}`;
   consoleState.querySelector("span").textContent = label;
-  const busy = status === "running" || status === "stopping";
+  const atCapacity = runningCount >= MAX_CONCURRENT_RUNS;
   document.querySelectorAll("[data-task]").forEach((button) => {
-    button.disabled = busy;
+    button.disabled = atCapacity;
   });
   document.querySelectorAll("[data-busy-control]").forEach((button) => {
-    button.disabled = busy;
+    button.disabled = atCapacity;
   });
-  microphoneButton.disabled = busy || !voiceSupported;
-  stopButton.disabled = !busy;
-  agentStopButton.disabled = !busy;
+  microphoneButton.disabled = (atCapacity && mediaRecorder?.state !== "recording") || !voiceSupported;
+  const focused = activeRuns.get(activeRunId);
+  stopButton.disabled = !focused || focused.task === "replay";
+  agentStopButton.disabled = !focused || focused.task !== "replay";
 }
 
 function showOutput() {
@@ -194,30 +222,32 @@ async function loadHistory({ preferPrompt } = {}) {
   document.querySelector("#run-count").textContent = String(histories.length);
   renderRunList();
 
-  const activeWorkflow = histories.find(
+  const activeWorkflows = histories.filter(
     (run) => run.workflowId && (run.workflowStatus === "running" || run.workflowStatus === "stopping")
   );
-  if (activeWorkflow && !activeRunId) {
-    activeRunId = activeWorkflow.workflowId;
-    activeRunTask = activeWorkflow.runKind === "replay" ? "replay" : "fanout";
-    lastFanoutPrompt = activeWorkflow.task;
-    if (activeRunTask === "replay") {
-      agentRunLabel.textContent = `Reuse completed agent · ${activeWorkflow.agentId}`;
-      renderAgentActiveRun({
-        id: activeWorkflow.workflowId,
-        task: "replay",
-        status: activeWorkflow.workflowStatus,
-        request: activeWorkflow.task,
-        agentId: activeWorkflow.agentId,
-        inputSource: activeWorkflow.source,
-        parentPhase: activeWorkflow.workflowPhase,
-      });
-    } else {
-      runLabel.textContent = "Adaptive Sail tree + learn";
+  for (const workflow of activeWorkflows) {
+    const tracked = {
+      id: workflow.workflowId,
+      task: workflow.runKind === "replay" ? "replay" : "fanout",
+      status: workflow.workflowStatus,
+      request: workflow.task,
+      agentId: workflow.agentId,
+      inputSource: workflow.source,
+      parentPhase: workflow.workflowPhase,
+      startedAt: workflow.createdAt,
+    };
+    activeRuns.set(tracked.id, tracked);
+    if (tracked.task === "replay") agentRunRecords.set(tracked.id, tracked);
+    if (!pollTimers.has(tracked.id)) {
+      pollTimers.set(tracked.id, window.setTimeout(() => pollRun(tracked.id), 100));
     }
-    setConsoleState(activeWorkflow.workflowStatus, activeWorkflow.workflowStatus === "stopping" ? "Stopping safely" : "Running");
-    pollTimer = window.setTimeout(pollRun, 100);
   }
+  if (!activeRunId && activeWorkflows[0]) {
+    activeRunId = activeWorkflows[0].workflowId;
+    activeRunTask = activeWorkflows[0].runKind === "replay" ? "replay" : "fanout";
+  }
+  renderAgentActiveRuns();
+  setConsoleState("idle", "Ready");
 
   const preferred = preferPrompt
     ? histories.find((run) => run.task === preferPrompt)
@@ -262,6 +292,11 @@ function renderRunList() {
 function selectRun(run) {
   selectedRun = run;
   selectedBranch = null;
+  if (run.workflowId && activeRuns.has(run.workflowId)) {
+    activeRunId = run.workflowId;
+    activeRunTask = activeRuns.get(run.workflowId).task;
+    setConsoleState("running", "Running");
+  }
   document.querySelector("#selected-prompt").textContent = run.task;
   const meta = document.querySelector("#selected-meta");
   meta.replaceChildren(
@@ -637,37 +672,65 @@ function renderTraceInspector(branch) {
   inspector.append(raw);
 }
 
-async function pollRun() {
-  if (!activeRunId) return;
+async function pollRun(runId) {
+  if (!runId) return;
   try {
-    const response = await fetch(`/api/runs/${activeRunId}`);
+    const response = await fetch(`/api/runs/${runId}`);
     const run = await response.json();
     if (!response.ok) throw new Error(run.error ?? "Could not read workflow status");
-    const replaying = activeRunTask === "replay" || run.task === "replay";
+    const replaying = run.task === "replay";
     const output = replaying ? agentOutput : runOutput;
-    if (replaying) agentRunLabel.textContent = run.label;
-    else runLabel.textContent = run.label;
-    output.textContent = run.output;
-    output.scrollTop = output.scrollHeight;
+    if (run.id === activeRunId) {
+      if (replaying) agentRunLabel.textContent = run.label;
+      else runLabel.textContent = run.label;
+      output.textContent = run.output;
+      output.scrollTop = output.scrollHeight;
+    }
     upsertWorkflowHistory(run);
-    if (replaying) renderAgentActiveRun(run);
+    if (replaying) {
+      agentRunRecords.set(run.id, run);
+      renderAgentActiveRuns();
+    }
     if (run.status === "running" || run.status === "stopping") {
-      setConsoleState(run.status, run.status === "stopping" ? "Stopping safely" : "Running");
-      pollTimer = window.setTimeout(pollRun, 700);
+      activeRuns.set(run.id, run);
+      setConsoleState(run.status, "Running");
+      pollTimers.set(run.id, window.setTimeout(() => pollRun(run.id), 700));
     } else {
+      activeRuns.delete(run.id);
+      window.clearTimeout(pollTimers.get(run.id));
+      pollTimers.delete(run.id);
+      if (activeRunId === run.id) {
+        const next = activeRuns.values().next().value;
+        activeRunId = next?.id ?? null;
+        activeRunTask = next?.task ?? null;
+      }
       setConsoleState(run.status, run.status === "succeeded" ? "Completed" : run.status);
-      activeRunId = null;
-      activeRunTask = null;
-      pollTimer = null;
-      await loadHistory({ preferPrompt: replaying ? run.request : lastFanoutPrompt });
-      lastFanoutPrompt = null;
+      await loadHistory({ preferPrompt: run.request });
     }
   } catch (error) {
-    const output = activeRunTask === "replay" ? agentOutput : runOutput;
-    output.textContent += `\n[console] ${error.message}\n`;
+    const tracked = activeRuns.get(runId);
+    if (runId === activeRunId) {
+      const output = tracked?.task === "replay" ? agentOutput : runOutput;
+      output.textContent += `\n[console] ${error.message}\n`;
+    }
+    activeRuns.delete(runId);
+    window.clearTimeout(pollTimers.get(runId));
+    pollTimers.delete(runId);
     setConsoleState("failed", "Connection error");
-    activeRunId = null;
+    if (activeRunId === runId) {
+      const next = activeRuns.values().next().value;
+      activeRunId = next?.id ?? null;
+      activeRunTask = next?.task ?? null;
+    }
   }
+}
+
+async function cancelRun(runId) {
+  if (!activeRuns.has(runId)) return;
+  await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+  window.clearTimeout(pollTimers.get(runId));
+  pollTimers.delete(runId);
+  await pollRun(runId);
 }
 
 async function startTask(task, { inputSource = "typed" } = {}) {
@@ -681,7 +744,6 @@ async function startTask(task, { inputSource = "typed" } = {}) {
       body.inputSource = inputSource;
       body.maxBranches = Number(document.querySelector("#max-branches").value);
       body.maxDepth = Number(document.querySelector("#max-depth").value);
-      lastFanoutPrompt = body.request;
     }
     if (task === "judge" || task === "distill") {
       if (!selectedRun) throw new Error("Select a prompt run first");
@@ -711,21 +773,20 @@ async function startTask(task, { inputSource = "typed" } = {}) {
         ? `[warm path] ${run.message}\nFill the missing inputs (${missing.join(", ")}), then choose Use completed agent.`
         : `[warm path] ${run.message}\nAll inputs were recovered from the ${run.inputSource} prompt.`;
       setConsoleState("succeeded", missing.length ? "Agent needs inputs" : "Saved agent matched");
-      lastFanoutPrompt = null;
       if (!missing.length) await runMatchedAgent(run.inputSource);
       return;
     }
+    activeRuns.set(run.id, run);
     activeRunId = run.id;
     activeRunTask = task;
     runLabel.textContent = run.label;
     runOutput.textContent = run.output;
     upsertWorkflowHistory(run, { select: task === "fanout" });
-    await pollRun();
+    setConsoleState("running", "Running");
+    await pollRun(run.id);
   } catch (error) {
     runOutput.textContent = `[console] ${error.message}`;
     setConsoleState("failed", "Could not start");
-    activeRunId = null;
-    activeRunTask = null;
   }
 }
 
@@ -733,7 +794,7 @@ function resetMicrophoneUi(label = voiceConfigured ? "READY" : "SET UP") {
   microphoneButton.classList.remove("recording", "transcribing");
   microphoneButton.querySelector("strong").textContent = "Speak";
   microphoneButton.setAttribute("aria-label", "Start microphone recording");
-  microphoneButton.disabled = !voiceSupported || Boolean(activeRunId);
+  microphoneButton.disabled = !voiceSupported || (activeRuns.size >= MAX_CONCURRENT_RUNS && mediaRecorder?.state !== "recording");
   voiceState.textContent = label;
 }
 
@@ -823,7 +884,7 @@ async function toggleMicrophone() {
     mediaRecorder.stop();
     return;
   }
-  if (activeRunId) return;
+  if (activeRuns.size >= MAX_CONCURRENT_RUNS) return;
   try {
     if (!voiceConfigured && !(await configureVoice())) return;
     microphoneStream = await navigator.mediaDevices.getUserMedia({
@@ -867,16 +928,12 @@ document.querySelector("#toggle-output").addEventListener("click", () => outputD
 stopButton.addEventListener("click", async () => {
   if (!activeRunId) return;
   stopButton.disabled = true;
-  await fetch(`/api/runs/${activeRunId}/cancel`, { method: "POST" });
-  window.clearTimeout(pollTimer);
-  await pollRun();
+  await cancelRun(activeRunId);
 });
 agentStopButton.addEventListener("click", async () => {
   if (!activeRunId) return;
   agentStopButton.disabled = true;
-  await fetch(`/api/runs/${activeRunId}/cancel`, { method: "POST" });
-  window.clearTimeout(pollTimer);
-  await pollRun();
+  await cancelRun(activeRunId);
 });
 
 loadHistory().catch((error) => {
@@ -1118,9 +1175,10 @@ async function runMatchedAgent(inputSource) {
 async function startAgentReplay(event, { confirmedOverride = null, inputSource = "typed" } = {}) {
   event?.preventDefault();
   if (!selectedAgent) return;
+  const pendingId = `pending:${++pendingRunSequence}`;
   setConsoleState("running", "Reusing agent");
   agentOutput.textContent = "Starting saved runbook…";
-  renderAgentActiveRun({
+  agentRunRecords.set(pendingId, {
     id: null,
     task: "replay",
     status: "running",
@@ -1128,7 +1186,9 @@ async function startAgentReplay(event, { confirmedOverride = null, inputSource =
     agentId: selectedAgent.id,
     inputSource,
     parentPhase: "starting saved runbook",
+    startedAt: new Date().toISOString(),
   });
+  renderAgentActiveRuns();
   try {
     const form = event?.currentTarget ?? document.querySelector("#agent-use-form");
     const body = {
@@ -1146,17 +1206,21 @@ async function startAgentReplay(event, { confirmedOverride = null, inputSource =
     });
     const run = await response.json();
     if (!response.ok) throw new Error(run.error ?? "Could not reuse completed agent");
+    agentRunRecords.delete(pendingId);
+    agentRunRecords.set(run.id, run);
+    activeRuns.set(run.id, run);
     activeRunId = run.id;
     activeRunTask = "replay";
     agentRunLabel.textContent = run.label;
     agentOutput.textContent = run.output;
     upsertWorkflowHistory(run);
-    renderAgentActiveRun(run);
-    await pollRun();
+    renderAgentActiveRuns();
+    setConsoleState("running", "Running");
+    await pollRun(run.id);
   } catch (error) {
     agentOutput.textContent = `[warm path] ${error.message}`;
     setConsoleState("failed", "Replay failed");
-    renderAgentActiveRun({
+    agentRunRecords.set(pendingId, {
       id: null,
       task: "replay",
       status: "failed",
@@ -1164,9 +1228,9 @@ async function startAgentReplay(event, { confirmedOverride = null, inputSource =
       agentId: selectedAgent.id,
       inputSource,
       parentPhase: error.message,
+      startedAt: new Date().toISOString(),
     });
-    activeRunId = null;
-    activeRunTask = null;
+    renderAgentActiveRuns();
   }
 }
 

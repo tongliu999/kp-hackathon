@@ -19,6 +19,7 @@ const MAX_BRANCH_LIMIT = 8;
 const DEFAULT_TREE_DEPTH = 3;
 const MIN_TREE_DEPTH = 1;
 const MAX_TREE_DEPTH = 4;
+const MAX_CONCURRENT_RUNS = 4;
 const AGENT_MARKER = "AGENTS_JSON ";
 const AGENT_MATCH_MARKER = "AGENT_MATCH ";
 const MAX_AUDIO_BYTES = 12_000_000;
@@ -547,12 +548,12 @@ function persistReplay(run) {
 }
 
 function startRun(task, input) {
-  const active = [...runs.values()].find(
+  const active = [...runs.values()].filter(
     (run) => run.status === "running" || run.status === "stopping"
   );
-  if (active) {
-    const error = new Error(`${active.label} is already running`);
-    error.statusCode = 409;
+  if (active.length >= MAX_CONCURRENT_RUNS) {
+    const error = new Error(`run capacity reached (${MAX_CONCURRENT_RUNS}); stop or wait for a run to finish`);
+    error.statusCode = 429;
     throw error;
   }
   const spec = taskCommand(task, input);

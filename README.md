@@ -300,8 +300,10 @@ visible in the form. Replays are recorded in the Runs rail too. Only a genuine m
 reaches the adaptive cold path.
 
 The console exposes only that fixed action allowlist—there is no arbitrary shell
-input. Only one workflow runs at a time, live output stays visible, and Stop
-sends an interrupt so Sailbox cleanup can run. Branch traces explicitly show
+input. Up to four top-level workflows can run concurrently; each one is tracked
+and polled independently, while Run adaptive and Speak remain available until the
+capacity is full. Live output stays visible, and each active run can send its own
+Stop interrupt so Sailbox cleanup can run. Branch traces explicitly show
 that messages, charges, and bookings remain unavailable inside search branches.
 Every completed prompt remains under its own `runs/<job_id>/` directory and in the
 left-hand history; deeper exploration adds child nodes to that run rather than
