@@ -381,3 +381,165 @@ def test_the_matcher_can_find_the_distilled_runbook(tmp_path, runbook_document):
         assert matched["id"] == "restaurant-reservation"
 
     assert store.lookup("what is the weather tomorrow") is None
+
+
+# --- Research (shell) trajectories -----------------------------------------
+#
+# The cold path's branch agent holds only shell/note/finish, so it emits
+# run{command} steps and fills no forms. The distiller was first written against
+# browser-shaped fixtures, and the two did not compose until _lift_from_request
+# existed. These tests pin the seam, because nothing else in the suite crosses
+# it: the fixtures cannot catch a mismatch they do not contain.
+
+
+def _research_trajectory(**overrides: Any) -> dict[str, Any]:
+    """A shell trajectory shaped like what branch_agent.py actually writes."""
+    trajectory = {
+        "branch_id": "b1",
+        "angle": "Build a candidate list from an independent source, then cross-check",
+        "task": (
+            "Book a table for two at an Italian restaurant in San Francisco "
+            "tomorrow evening at seven."
+        ),
+        "steps": [
+            {
+                "i": 0,
+                "kind": "shell",
+                "action": "run",
+                "outcome": "ok",
+                "args": {"command": 'date -u -d tomorrow +"%A %Y-%m-%d"'},
+                "observation_excerpt": "TOMORROW: Monday 2026-08-03",
+            },
+            {
+                "i": 1,
+                "kind": "shell",
+                "action": "run",
+                "outcome": "ok",
+                "args": {
+                    "command": "curl -s https://sf.eater.com/maps/best-italian-restaurants-san-francisco",
+                    "url": "https://sf.eater.com/maps/best-italian-restaurants-san-francisco",
+                },
+                "observation_excerpt": "Cotogna, Flour + Water, Che Fico",
+            },
+            {
+                "i": 2,
+                "kind": "think",
+                "action": "note",
+                "outcome": "ok",
+                "args": {"thought": "cross-check each against the booking platform"},
+            },
+        ],
+        "final_answer": "Not booked — stopped at the reservable booking pages.",
+        "success_signal": True,
+        "wall_ms": 170_200,
+    }
+    trajectory.update(overrides)
+    return trajectory
+
+
+def test_a_research_trajectory_distils_even_though_it_fills_no_forms():
+    """The M2 -> M3 seam. Branches curl; they never type into a field."""
+    document = distill(_research_trajectory())
+    assert {slot["name"] for slot in document["slots"]} == {
+        "party_size",
+        "cuisine",
+        "city",
+        "date",
+        "time",
+    }
+    assert document["id"] == "restaurant-reservation"
+
+
+def test_a_research_runbook_declares_the_same_slots_the_dialogue_collects():
+    """The executor fail-closes on an unknown slot, so these sets must agree.
+
+    The hand-written runbook takes a city; before the vocabulary had a city rule
+    the distilled one did not, and replaying it with the dialogue's own slots
+    died on "unknown slots: city" -- M3's output was not drivable by M1's
+    dialogue.
+    """
+    document = distill(_research_trajectory())
+    handwritten = json.loads((ROOT / "demo/handwritten_runbook.json").read_text())
+    assert {slot["name"] for slot in document["slots"]} == {
+        slot["name"] for slot in handwritten["slots"]
+    }
+
+
+def test_a_research_runbook_still_carries_no_concrete_values():
+    """The generalization property is not relaxed for research trajectories."""
+    document = distill(_research_trajectory())
+    text = _argument_text(document)
+    for literal in ("Cotogna", "Flour + Water", "eater.com", "2026-08-03", "curl"):
+        assert literal not in text
+    for step in document["steps"]:
+        for value in step["arguments"].values():
+            assert value.startswith("{{"), value
+
+
+def test_a_research_trajectory_that_pursued_another_request_is_refused():
+    """At least one request value must appear in what the branch actually ran.
+
+    Without this a trajectory that solved some unrelated task could donate its
+    slots, since the slots come from the request text rather than from anything
+    the run wrote.
+    """
+    trajectory = _research_trajectory()
+    for step in trajectory["steps"]:
+        step["args"].pop("url", None)
+        if "command" in step["args"]:
+            step["args"]["command"] = "curl -s https://example.com/weather"
+    with pytest.raises(DistillationError, match="does not evidence"):
+        distill(trajectory)
+
+
+def test_corroboration_ignores_what_the_agent_merely_restated():
+    """Observations and the final answer restate the task; that is not evidence.
+
+    A check satisfiable by the agent echoing its own instructions would pass by
+    accident and read as proof. Only executed commands and URLs count -- so a
+    run whose commands touch nothing from the request is refused even though
+    every slot value appears verbatim in its prose.
+    """
+    trajectory = _research_trajectory()
+    for step in trajectory["steps"]:
+        step["args"].pop("url", None)
+        if "command" in step["args"]:
+            step["args"]["command"] = "curl -s https://example.com/"
+        step["observation_excerpt"] = (
+            "Booking a table for two at an Italian restaurant tomorrow at seven"
+        )
+    trajectory["final_answer"] = (
+        "Table for two, Italian, tomorrow at seven — ready to confirm."
+    )
+    with pytest.raises(DistillationError, match="does not evidence"):
+        distill(trajectory)
+
+
+def test_a_losing_research_trajectory_is_still_refused():
+    with pytest.raises(DistillationError, match="did not complete"):
+        distill(_research_trajectory(success_signal=False))
+
+
+def test_a_research_runbook_replays_with_values_the_branch_never_saw():
+    """The point of distilling: the next caller supplies different values."""
+    import asyncio
+
+    document = distill(_research_trajectory())
+    runner = RecordingRunner()
+    executor = RunbookExecutor(runner, RecordingGate(True))
+    result = asyncio.run(
+        executor.execute(
+            Runbook.from_dict(document),
+            {
+                "party_size": 4,
+                "cuisine": "Japanese",
+                "city": "New York",
+                "date": "Saturday",
+                "time": "8 pm",
+            },
+        )
+    )
+    assert result.succeeded
+    assert runner.actions == ["restaurant.search", "restaurant.book"]
+    assert dict(runner.calls[-1][1])["cuisine"] == "Japanese"
+    assert dict(runner.calls[-1][1])["party_size"] == 4

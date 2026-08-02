@@ -72,6 +72,14 @@ _CARDINALS = {
 }
 _CARDINAL_WORDS = "|".join(_CARDINALS)
 
+# Words that begin the clause after a place name, used to find where a spoken
+# city ends: "in Los Angeles saturday night" must yield "Los Angeles", not
+# "Los Angeles saturday".
+_CLAUSE_BREAK = (
+    r"tomorrow|today|tonight|this|next|on|at|for|around|evening|night"
+    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+)
+
 # Values a runbook must never carry: they belong to the box's session or to the
 # provider's current DOM, not to the task.
 _MECHANISM_MARKERS = ("data-test", "http://", "https://", "://", "selector")
@@ -195,7 +203,10 @@ RESTAURANT = TaskVocabulary(
             type="string",
             prompt="What kind of food?",
             description="the kind of food",
-            readback="at a {{cuisine}} restaurant",
+            # No article: the value is a template at distill time, so "a" cannot
+            # be chosen to fit it and "a Italian restaurant" gets read aloud on
+            # stage. Dropping it is correct for every cuisine.
+            readback="{{cuisine}}",
             request=re.compile(
                 r"\b(italian|thai|japanese|sushi|chinese|korean|vietnamese|indian"
                 r"|mexican|french|greek|spanish|mediterranean|american|pizza)\b",
@@ -206,6 +217,30 @@ RESTAURANT = TaskVocabulary(
                 r"|mexican|french|greek|spanish|mediterranean|american|pizza)\s*$",
                 re.I,
             ),
+            key=_fold,
+        ),
+        SlotRule(
+            name="city",
+            type="string",
+            prompt="Which city?",
+            description="the city to book in",
+            readback="in {{city}}",
+            # Captured positionally after "in", stopping at the word that starts
+            # the next clause, rather than from a list of known cities: an
+            # enumeration silently drops every city nobody thought to add, and
+            # the failure looks like "the runbook just doesn't take a city".
+            # Not lifted at all when the request names no city, which is why the
+            # browser fixture ("...on friday at seven, somewhere italian") is
+            # unaffected.
+            request=re.compile(
+                r"\bin\s+((?!the\b|a\b|an\b)[A-Za-z][A-Za-z.'-]*"
+                r"(?:\s+[A-Za-z][A-Za-z.'-]*){0,2}?)"
+                rf"(?=\s+(?:{_CLAUSE_BREAK})\b|[,.]|$)",
+                re.I,
+            ),
+            # Deliberately permissive: `key` is what decides a match, so this
+            # can only claim a written value that folds to the spoken city.
+            observed=re.compile(r"^\s*([A-Za-z][A-Za-z .'-]*)\s*$"),
             key=_fold,
         ),
         SlotRule(
@@ -287,7 +322,13 @@ def distill(trajectory: Mapping[str, Any]) -> dict[str, Any]:
             "no steps survived pruning; the trajectory records no path that worked"
         )
 
-    evidence = _lift_slots(vocabulary, task, steps)
+    # Which lifter applies is a property of the trajectory's shape, not a
+    # fallback: a browser run keeps the strict per-slot corroboration, a
+    # research run cannot satisfy it and says so rather than degrading quietly.
+    if _is_research(steps):
+        evidence = _lift_from_request(vocabulary, task, steps)
+    else:
+        evidence = _lift_slots(vocabulary, task, steps)
     if not evidence:
         raise DistillationError(
             "no request value was lifted into a slot; the runbook would only ever "
@@ -428,6 +469,91 @@ def _lift_slots(
             )
 
     return [claimed[rule.name] for rule in vocabulary.slots if rule.name in claimed]
+
+
+def _is_research(steps: Iterable[Mapping[str, Any]]) -> bool:
+    """Does this trajectory come from a shell branch rather than a browser one?
+
+    The cold path's branch agent holds exactly three tools -- shell, note,
+    finish -- so it emits ``run{command}`` steps and can never fill a form. The
+    fixtures this module was first written against are browser-shaped
+    (``fill{selector,value}``). Both are legitimate trajectories; they just
+    carry evidence in different places, so the shape decides how slots are
+    lifted.
+    """
+    return any(
+        isinstance((step.get("args") or {}).get("command"), str) for step in steps
+    )
+
+
+def _executed_text(steps: Iterable[Mapping[str, Any]]) -> str:
+    """Only what the run actually ran: its commands and the URLs they fetched.
+
+    Deliberately excludes observations, notes and the final answer. Those
+    restate the task in the agent's own words, so searching them for a request
+    value proves nothing -- the value is there because the agent was told it,
+    not because it did anything with it.
+    """
+    parts: list[str] = []
+    for step in steps:
+        args = step.get("args") or {}
+        for key in ("command", "url"):
+            value = args.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+    return "\n".join(parts)
+
+
+def _lift_from_request(
+    vocabulary: TaskVocabulary,
+    task: str,
+    steps: Sequence[Mapping[str, Any]],
+) -> list[_Evidence]:
+    """Lift slots for a research trajectory, which fills no fields.
+
+    HOW THIS DIFFERS, stated plainly rather than buried. For a browser
+    trajectory :func:`_lift_slots` requires each slot to be corroborated by a
+    value the run *wrote into the provider*, which enforces "a slot the run
+    never exercised cannot be invented". A research branch writes nothing, so
+    that per-slot check cannot be satisfied and is **not** performed here.
+
+    It is not faked either. Substring-searching the commands for each value
+    looks like corroboration and is noise: on a real trajectory ``\\b2\\b``
+    matches the ``<h2`` inside a grep pattern, which would "prove" a party size
+    of two from an HTML tag. A check that can be passed by accident is worse
+    than an absent one, because it reads as evidence.
+
+    Two properties do survive, and they are what keep this honest:
+
+    * **Only values the request mentioned become slots.** ``rule.spoken`` reads
+      the task text, so a value the caller never said can still never become a
+      slot -- the "Ristorante Adriatico" failure remains impossible.
+    * **The run must have pursued THIS request.** At least one request value has
+      to appear in what the branch actually executed. Without it a trajectory
+      that solved some other task could donate its slots to this runbook.
+
+    The literal-value risk is handled structurally elsewhere: :func:`_arguments`
+    emits only ``{{slot}}`` templates and :func:`_verify` rejects any concrete
+    mechanism that leaks through, so no restaurant name can reach the document
+    by this path regardless.
+    """
+    executed = _executed_text(steps).casefold()
+    claimed = [
+        _Evidence(rule, spoken.strip())
+        for rule in vocabulary.slots
+        for spoken in [rule.spoken(task)]
+        if spoken is not None
+    ]
+    if not claimed:
+        return []
+
+    if not any(item.observed.casefold() in executed for item in claimed):
+        raise DistillationError(
+            "no request value appears in anything the branch executed; the "
+            "trajectory does not evidence that it pursued this request, so its "
+            "slots cannot be trusted"
+        )
+    return claimed
 
 
 def _rank(steps: Sequence[Mapping[str, Any]], vocabulary: TaskVocabulary) -> int | None:

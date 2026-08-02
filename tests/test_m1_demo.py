@@ -88,9 +88,10 @@ async def test_offline_path_collects_slots_and_returns_fake_confirmation(tmp_pat
     # The runbook declares a spoken `prompt`, which is used verbatim in place of
     # the generated "Please provide the party size." fallback.
     assert voice.messages[0] == "How many people?"
-    # The "configured-provider" placeholder is resolved: OpenTable is the chosen
-    # provider, and it is a name getProvider() actually recognises.
-    assert "opentable" in confirm_voice.messages[0]
+    # The "configured-provider" placeholder is resolved: Resy is the chosen
+    # provider, and it is a name getProvider() actually recognises. (TON-8 moved
+    # off OpenTable — Akamai 403s its search and booking pages from Sail egress.)
+    assert "resy" in confirm_voice.messages[0]
 
 
 @pytest.mark.asyncio

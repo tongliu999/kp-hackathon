@@ -2,7 +2,6 @@ import { confirmGate } from "./confirmGate.js";
 import { recordBooking } from "./store.js";
 import { isStubMode, stubBooking } from "./stubMode.js";
 import { getProvider } from "./providers/index.js";
-import { loadGuestProfile } from "./guestProfile.js";
 
 const REQUIRED_PARAMS = ["restaurant", "date", "time", "partySize"];
 
@@ -47,7 +46,6 @@ export async function bookStep({ provider, params, page, getYes, storePath, env 
   }
 
   const adapter = getProvider(provider);
-  const guestInfo = loadGuestProfile(env);
 
   const results = await adapter.search(page, params);
   if (!results || results.length === 0) {
@@ -63,7 +61,7 @@ export async function bookStep({ provider, params, page, getYes, storePath, env 
     );
   }
 
-  const { confirmationRef, raw } = await adapter.book(page, slot, guestInfo);
+  const { confirmationRef, raw } = await adapter.book(page, slot);
   if (!confirmationRef) {
     throw new UnexpectedPageStateError(
       `${provider}: book() returned without a confirmation ref — treating as not booked.`

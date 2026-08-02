@@ -1,7 +1,13 @@
-// OpenTable adapter — DEAD from this environment as of 2026-08-02: the domain is blocked
-// at the network edge (Akamai "Access Denied") before any page loads. Selectors below were
-// never verified live and can't be from here. Kept for interface parity / in case a future
-// environment reaches the domain fine; use resy.js instead. See providers/index.js.
+// OpenTable adapter.
+//
+// NOT USABLE FROM A SAILBOX — see providers/index.js. OpenTable's Akamai edge returns
+// 403 "Access Denied" for /, /s (search), /<city>-restaurants and /r/<venue> from Sail's
+// egress range, verified in a real Chromium from three different Sail IPs. Every page
+// this adapter needs is blocked, so its selectors below are still unverified guesses and
+// cannot be verified from here. TON-8 selected Resy instead.
+//
+// Kept as a reference implementation of the provider contract, and in case the demo ever
+// runs from an egress OpenTable does not block.
 
 const BASE_URL = "https://www.opentable.com";
 
@@ -31,7 +37,7 @@ export function selectSlot(results, { time }) {
   return results.find((r) => r.label.includes(time)) ?? null;
 }
 
-export async function book(page, slot, _guestInfo) {
+export async function book(page, slot) {
   await slot.handle.click();
   const confirmButton = page.getByRole("button", { name: /confirm reservation|complete reservation/i });
   await confirmButton.waitFor({ state: "visible", timeout: 15_000 });

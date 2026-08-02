@@ -1,0 +1,129 @@
+{
+  "branch_id": "b0",
+  "angle": "Go straight to the single most obvious primary source and take the first result that satisfies every stated constraint",
+  "task": "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.",
+  "steps": [
+    {
+      "i": 0,
+      "t": 17.665,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "date -d \"tomorrow\" +\"%Y-%m-%d %A\""
+      },
+      "observation_excerpt": "2026-08-03 Monday",
+      "outcome": "ok"
+    },
+    {
+      "i": 1,
+      "t": 32.294,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s \"https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\" | grep -o 'href=\"/r/[^\"]*\"' | head -20"
+      },
+      "observation_excerpt": "(no output, exit 0)",
+      "outcome": "ok"
+    },
+    {
+      "i": 2,
+      "t": 40.796,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s \"https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\" | head -c 2000"
+      },
+      "observation_excerpt": "(no output, exit 0)",
+      "outcome": "ok"
+    },
+    {
+      "i": 3,
+      "t": 49.116,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s -o /dev/null -w \"%{http_code} %{url_effective}\\n\" -L \"https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\""
+      },
+      "observation_excerpt": "000 https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian",
+      "outcome": "error"
+    },
+    {
+      "i": 4,
+      "t": 57.659,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -v \"https://www.opentable.com/\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\" 2>&1 | head -30"
+      },
+      "observation_excerpt": "% Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\n  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0*   Trying 23.219.78.150:443...\n* Connected to www.opentable.com (23.219.78.150) port 443 (#0)\n* ALPN: offers h2,http/1.1\n} [5 bytes data]\n* TLSv1.3 (OUT), TLS handshake, Client hello (1):\n} [512 bytes data]\n*  CAfile: /etc/ssl/certs/ca-certificates.crt\n*  CApath: /etc/ssl/certs\n{ [5 bytes data]\n* TLSv1.3 (IN), TLS handshake, Server hello (2):\n{ [122 bytes data]\n* TLSv1.3 (IN), TLS handshake, Encrypted Extensions (8):\n{ [29 bytes data]\n* TLSv1.3 (IN), TLS handshake, Certificate (11):\n{ [4090 bytes data]\n* TLSv1.3 (IN), TLS handshake, CERT verify (15):\n{ [264 bytes data]\n* TLSv1.3 (IN), TLS handshake, Finished (20):\n{ [52 bytes data]\n* TLSv1.3 (OUT), TLS change cipher, Change cipher spec (1):\n} [1 bytes data]\n* TLSv1.3 (OUT), TLS handshake, Finished (20):\n} [52 bytes data]\n* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384\n* ALPN: server accepted h2\n* Server certificate:\n*  subject: CN=opentable.com\n*  start date: Jun  1 09:26:00 2026 GMT",
+      "outcome": "ok"
+    },
+    {
+      "i": 5,
+      "t": 65.898,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s -D - \"https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\" -H \"Accept: text/html\" -o body.html; echo \"---SIZE---\"; wc -c body.html; echo \"---HEADERS---\"; head -20 /dev/stdin <<EOF\nEOF"
+      },
+      "observation_excerpt": "refused: sending a request body would commit something; branches are read-only",
+      "outcome": "abandoned",
+      "note": "blocked by Invariant 1: branches research, they never book"
+    },
+    {
+      "i": 6,
+      "t": 77.249,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s -i \"https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\" -H \"Accept: text/html\" 2>&1 | head -40"
+      },
+      "observation_excerpt": "(no output, exit 0)",
+      "outcome": "ok"
+    },
+    {
+      "i": 7,
+      "t": 91.629,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s -i \"https://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\" -o /tmp/ot.html; wc -c /tmp/ot.html; head -25 /tmp/ot.html"
+      },
+      "observation_excerpt": "wc: /tmp/ot.html: No such file or directory\nhead: cannot open '/tmp/ot.html' for reading: No such file or directory",
+      "outcome": "error"
+    },
+    {
+      "i": 8,
+      "t": 130.087,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "echo \"=== example.com ===\"; curl -s -m 15 -o /dev/null -w \"http=%{http_code} size=%{size_download}\\n\" \"https://example.com\"; echo \"=== opentable homepage ===\"; curl -s -m 20 -o /dev/null -w \"http=%{http_code} size=%{size_download}\\n\" \"https://www.opentable.com/\" -A \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36\""
+      },
+      "observation_excerpt": "=== example.com ===\nhttp=200 size=559\n=== opentable homepage ===\nhttp=000 size=0",
+      "outcome": "error"
+    },
+    {
+      "i": 9,
+      "t": 182.429,
+      "kind": "shell",
+      "action": "run",
+      "args": {
+        "command": "curl -s -m 20 --http1.1 -o /dev/null -w \"http=%{http_code} size=%{size_download}\\n\" \"https://www.opentable.com/r/acquerello\" -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\" -H \"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\" -H \"Accept-Language: en-US,en;q=0.5\" -H \"Accept-Encoding: gzip, deflate, br\" -H \"Upgrade-Insecure-Requests: 1\""
+      },
+      "observation_excerpt": "http=000 size=0",
+      "outcome": "error"
+    },
+    {
+      "i": 10,
+      "t": 205.783,
+      "kind": "think",
+      "action": "finish",
+      "observation_excerpt": "I went straight to OpenTable, the service most people use for restaurant reservations, but I could not reach a page where a booking could be completed because the site blocks automated access.\n\nWhat I confirmed:\n- Target date/time: tomorrow, Monday 2026-08-03, 7:00 PM.\n- Parameters for the search: party of 2, cuisine = Italian, city = San Francisco.\n- Connectivity is fine (https://example.com returns HTTP 200), but every request to www.opentable.com completes the TLS handshake and then is dropped \u2014 HTTP status 000 with 0 bytes returned. This held for the search endpoint, the homepage, and a specific restaurant page, on both HTTP/2 and forced HTTP/1.1 with full desktop-browser headers. This is consistent with OpenTable's post-TLS anti-bot blocking, which a headless curl request cannot pass (it normally requires JS/challenge execution or a real browser session).\n\nOutcome: NOT completed. I never reached an actual restaurant availability page or reservation-confirmation endpoint, so the irreversible booking step was not \u2014 and cannot be \u2014 reached via this path from here.\n\nThe correct next step for a human is to open this exact URL in a normal browser and pick the first Italian restaurant with a 7:00 PM (or nearest) slot for 2:\n\nhttps://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\n\n(metroId=4 is San Francisco.) The human should review the table, then confirm on OpenTable's reservation flow \u2014 which is the irreversible step that should only happen with human confirmation.\n\nNote: My approach was blocked at the network/anti-bot layer, not at the task-logic layer. If automated access to OpenTable's availability data is required, it would need to go through OpenTable's partner API or a browser-driven session, neither of which I can execute within read-only tool access here.",
+      "outcome": "ok"
+    }
+  ],
+  "final_answer": "I went straight to OpenTable, the service most people use for restaurant reservations, but I could not reach a page where a booking could be completed because the site blocks automated access.\n\nWhat I confirmed:\n- Target date/time: tomorrow, Monday 2026-08-03, 7:00 PM.\n- Parameters for the search: party of 2, cuisine = Italian, city = San Francisco.\n- Connectivity is fine (https://example.com returns HTTP 200), but every request to www.opentable.com completes the TLS handshake and then is dropped \u2014 HTTP status 000 with 0 bytes returned. This held for the search endpoint, the homepage, and a specific restaurant page, on both HTTP/2 and forced HTTP/1.1 with full desktop-browser headers. This is consistent with OpenTable's post-TLS anti-bot blocking, which a headless curl request cannot pass (it normally requires JS/challenge execution or a real browser session).\n\nOutcome: NOT completed. I never reached an actual restaurant availability page or reservation-confirmation endpoint, so the irreversible booking step was not \u2014 and cannot be \u2014 reached via this path from here.\n\nThe correct next step for a human is to open this exact URL in a normal browser and pick the first Italian restaurant with a 7:00 PM (or nearest) slot for 2:\n\nhttps://www.opentable.com/s/?covers=2&dateTime=2026-08-03T19:00&metroId=4&term=Italian\n\n(metroId=4 is San Francisco.) The human should review the table, then confirm on OpenTable's reservation flow \u2014 which is the irreversible step that should only happen with human confirmation.\n\nNote: My approach was blocked at the network/anti-bot layer, not at the task-logic layer. If automated access to OpenTable's availability data is required, it would need to go through OpenTable's partner API or a browser-driven session, neither of which I can execute within read-only tool access here.",
+  "success_signal": false,
+  "wall_ms": 205782
+}

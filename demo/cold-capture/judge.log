@@ -1,0 +1,9 @@
+moonshotai/Kimi-K2.6 @ temperature=0.0 effort=high
+comparing: b0, b1, b2
+
+run 1/3  b1  b1 is the winner because it identified multiple specific Italian restaurants from an independent source and verified live Resy booking pages for the exact requested date, party size, and 7:00 PM time without relaxing any constraints, whereas runner-up b2 explicitly abandoned the stated 'at seven' requirement to optimize for a different axis.
+run 2/3  b1  b1 wins because it respected every stated constraint (including the exact 7:00 PM time), curated an independent shortlist of specific Italian restaurants, and verified live Resy booking pages for four candidates, whereas the runner-up (b2) explicitly relaxed the 'at seven' constraint and b0 never identified any specific restaurant at all.
+run 3/3  b1  b1 maintained every stated constraint (party of two, Italian cuisine, San Francisco, tomorrow at 7:00 PM) while producing a curated shortlist of 15 restaurants from an independent editorial source and verifying four of them as live, bookable venues on Resy with direct URLs, whereas b2 explicitly relaxed the 'at seven' requirement and burned steps on failed SFGate/Google scrapes, and b0 never made it past OpenTable's anti-bot blocking to identify any specific restaurant at all.
+
+tally: b1 x3
+consistent: 3/3 runs picked b1

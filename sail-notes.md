@@ -303,26 +303,210 @@ a 20-step warm replay is ~2s of Sail time. The cold path's minutes are all agent
 sleep/resume from a fully dead client. What remains unproven is only whether the **provider**
 still accepts the session, which is the half that needs a real provider to test.
 
+## Browser auth in the box — TON-8 [VERIFIED against prod]
+
+### Some sites block Sail's egress outright. Check this before choosing a provider.
+
+**OpenTable is unusable from a Sailbox.** Its Akamai edge returns **403 Access Denied** for
+search (`/s?term=`), city (`/<city>-restaurants`) and venue (`/r/<venue>`) pages — in a real
+Chromium with a real browser fingerprint, not just curl. Only `/my/profile` (login) renders.
+
+Measured from **three separate Sail egress IPs** — 54.202.28.162, 54.191.8.10, and a fresh
+box — including a forked child, which gets its own IP. So it is an **egress-range** block,
+not one poisoned address. `Sailbox.create()` exposes **no region option**, so there is no
+Sail-side way around it.
+
+Two traps that cost real time here, worth knowing for any provider:
+
+- **Only the login page working makes a network block look like an auth problem.** It is not.
+- **`/s?term=` returns HTTP 200 with an Access Denied *body*.** Status code and page title
+  both lie. **Assert on rendered text**, never on `response.status()` alone.
+
+Resy serves everything from the same box. That is why TON-8 chose it.
+
+### You may be able to READ a site from a Sailbox and still not be able to LOG IN
+
+The most expensive finding in TON-8, and the least obvious. Bot protection guards
+**auth endpoints** far harder than content, so a provider can look completely
+usable right up until someone tries to sign in.
+
+Measured on Resy, identical request, only the source IP differing:
+
+| request | from the Sailbox | from a residential IP |
+|---|---|---|
+| `OPTIONS /4/auth/mobile` | **500**, no CORS headers | **204** + full `access-control-allow-*` |
+| `OPTIONS /3/auth/password` | **500** | **204** |
+| `OPTIONS /4/find` | 204 | 204 |
+| `GET /` | 302 | 302 |
+
+Reading works. Searching works — the site returns 80 real bookable slots. Only
+`/*/auth/*` is refused, repeatably (3/3), from Imperva's edge.
+
+**In a browser this is invisible.** A 500 carrying no `Access-Control-Allow-Origin`
+is indistinguishable to the browser from a CORS misconfiguration, so the console
+says:
+
+```
+Access to XMLHttpRequest at 'https://api.resy.com/4/auth/mobile' … has been
+blocked by CORS policy: No 'Access-Control-Allow-Origin' header
+```
+
+and the login button simply does nothing — no error, no spinner, nothing on
+screen. It reads exactly like a broken form or bad credentials. Two people burned
+significant time on "the account must be unverified" before the source-IP
+comparison settled it.
+
+**How to diagnose this in one step:** send the *exact* failing request from the
+box and from a non-datacenter IP and compare. Anything else — retrying the login,
+checking the password, re-reading cookies — cannot distinguish the two causes.
+Note also that `x-iinfo` differed consistently (`PNNN` from the box vs `NNNN`
+from residential), which is Imperva classifying the traffic before it ever
+reaches the origin.
+
+**Consequence for any in-box auth plan:** logging in *from* a Sailbox may be
+impossible regardless of credentials. Verify a provider's auth endpoint from the
+box **before** choosing it.
+
+### Importing a session does not rescue it — tried, and it fails for the same reason
+
+The obvious workaround is to authenticate on a residential IP and carry the
+cookies in. It was implemented (`scripts/import-session.mjs`) and it does not
+work for Resy.
+
+All 15 cookies import cleanly, including the httpOnly `production_refresh_token`,
+and the token survives in the profile. But it is a **refresh** token: on every
+page load the app exchanges it for an access token via
+
+```
+POST https://api.resy.com/3/auth/refresh   ->  net::ERR_FAILED   (from the box)
+GET  https://api.resy.com/3/collections    ->  200               (same page load)
+```
+
+The exchange is an auth endpoint, so it is blocked, so the session never
+activates. The page renders logged-out with a perfectly valid credential sitting
+in its cookie jar.
+
+**The general shape: a session is not a cookie, it is a cookie plus the right to
+refresh it.** Any provider that mints short-lived access tokens from a
+long-lived refresh token cannot be smuggled into an environment whose egress the
+provider blocks — you would have to import a fresh access token faster than it
+expires, which is not a demo you want to run.
+
+An access token cached in `localStorage` could in principle be imported instead
+(Playwright's `storageState` carries origins as well as cookies), but it would
+expire mid-demo with no way to refresh, which is worse than a stub.
+
+**What actually fixes it** is changing the egress, not the credential: route the
+box's browser through a proxy on a non-datacenter IP (`--proxy-server`, e.g. via
+an `ssh -R` reverse tunnel from a laptop). Then auth and booking both work and
+the session still lives in the box's on-disk profile.
+
+### The recipe that works — TON-13 branches need this exact setup
+
+```
+user-data-dir : /root/booking/profile
+chromium      : --no-sandbox --disable-gpu
+                --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+                --user-data-dir=/root/booking/profile --window-size=1440,900
+                --no-first-run --no-default-browser-check
+tunnel        : tcp <ingress> -> scripts/cdp-proxy.js :9223 -> 127.0.0.1:9222
+```
+
+**Attach, don't launch.** `chromium.connectOverCDP()` onto the browser already running in the
+box, then use `browser.contexts()[0]` — the persistent profile's own context. Two failure
+modes this avoids:
+
+- `launchPersistentContext()` against a `user-data-dir` while another chromium holds it either
+  refuses to start or forks a copy of the profile, and **the login appears to have vanished**.
+- `browser.newContext()` is incognito. It carries no cookies, so it passes every local test and
+  is logged out on stage — the exact failure this document warned about above.
+
+`browser.close()` on a CDP attachment **disconnects rather than killing the browser** [VERIFIED]
+— the box's chromium survived it.
+
+### Reaching CDP from outside the box needs a rewriting proxy, not a port forward
+
+Chrome refuses any DevTools request whose `Host` header is not `localhost` or a bare IP
+(anti-DNS-rebinding), and it advertises `webSocketDebuggerUrl` as `ws://127.0.0.1:9222/...`,
+which is meaningless outside the box. So socat/`ssh -L` alone will not do.
+
+**The part that will cost you an hour:** Playwright sends `Connection: keep-alive` and reuses
+**one TCP connection** for both `GET /json/version` and the WebSocket upgrade that follows. A
+proxy that rewrites only the first request head and then splices raw bytes lets the upgrade
+through with the original Host, and Chrome answers `500 Host header is specified and is not an
+IP address or localhost` — *after* the version probe already succeeded. It reads as a WebSocket
+bug and is a header bug. Rewrite **every** head until a `101` is seen, then splice.
+
+**Expose it as `protocol: "tcp"` with an `allowlist`, never as a public HTTP listener.** CDP is
+unauthenticated and is arbitrary code execution in a browser holding a real login and a saved
+card. Note the allowlist pins one caller IP — re-run the setup script from the machine that
+will drive the demo.
+
+### pause() → resume() with a live browser [VERIFIED]
+
+Measured on the box running Xvfb + chromium + the proxy: **12.2s down, 5.0s up**,
+`boot_id` **unchanged** (warm — memory restored, not just disk), chromium and the proxy still
+running, CDP still answering, and **both ingress listeners survived with identical URLs**
+— including the TCP one. A cookie planted before the pause was still present on reconnect
+**from a fresh process**.
+
+This extends TON-7's finding to a live browser: the Sail layer is not what will break warm
+replay. What remains provider-specific is whether the *site* still accepts the session.
+
+### fork() [VERIFIED]
+
+A forked child **inherits both the running (detached) chromium and the on-disk profile** —
+`/root/booking/profile/Default/Cookies` was present in the child and its chromium was already
+up, with no relaunch.
+
+### Egress IP is NOT stable — it rotates per connection [VERIFIED]
+
+**Six consecutive `curl https://ifconfig.me` from one running box, no pause, returned four
+distinct addresses:** 34.212.113.139, 35.93.154.169, 34.215.198.45, 34.217.94.94. Add
+54.202.28.162 and 54.191.8.10 from other samples. All AWS us-west-2 — this is a NAT pool, not
+a per-box address.
+
+**This corrects an earlier reading in this document.** A forked child was observed with a
+different egress IP from its parent and that was attributed to forking. It is not fork-specific:
+the same box gives different IPs between two ordinary requests. Any parent-vs-child IP
+comparison is measuring the pool, not the fork.
+
+Two consequences:
+
+- **"Does the child get a different egress IP?" is the wrong question.** If a provider pinned a
+  session to an IP, the session would break between two consecutive page loads for *everyone*,
+  forked or not. So IP pinning is either not in play or is fatal generally — it is not a
+  branch-specific risk.
+- **It strengthens the OpenTable finding.** Those 403s arrived across many different source
+  addresses, so the block is at range/ASN level, not a reputation score on one address. Nothing
+  is gained by retrying to get "a better IP".
+
+Corollary for anything that allowlists by IP: an outbound allowlist keyed to a Sailbox's address
+cannot work. (Sail *ingress* allowlists are unaffected — those key on the caller's IP.)
+
 ## Still open
 
-Answered above: process survival, fork-vs-checkpoint, N=3 concurrency, create timing, and
-disk/memory survival across a disconnect (TON-7).
+Answered above: process survival, fork-vs-checkpoint, N=3 concurrency, create timing,
+disk/memory survival across a disconnect (TON-7), and — new — live-browser survival across
+pause/resume plus the fork egress-IP question (TON-8).
 
-Remaining, and all of it is the **auth** half — it needs a chosen booking provider, so it belongs
-with Talia's TON-8 rather than here:
+Remaining. The first two are now narrowed to a **provider** question — no Sail question is left
+in them — and both are blocked on a real logged-in session, so they belong with TON-8:
 
-- **[OPEN]** Does a real browser login survive `pause()` → `resume()`? *This is the half that sits
-  on the critical path* — it's the warm-replay story and the reason for choosing Sail.
-  **Narrowed by TON-7:** the box layer is settled — disk *and* memory survive sleep/resume from a
-  dead client. What's left is purely whether the provider re-accepts the session, so this is now a
-  provider question, not a Sail question.
-- **[OPEN]** Does a login survive a fork, and **does the child get a different egress IP?** Not
-  stated anywhere in the docs. Only matters if the provider pins sessions to IP or fingerprints
-  the device.
+- **[OPEN]** Does a real **provider session** survive `pause()` → `resume()`? *This is the half
+  that sits on the critical path* — it's the warm-replay story and the reason for choosing Sail.
+  **Fully settled on the Sail side** (TON-7 for disk/memory, TON-8 above for a live browser,
+  its processes and its ingress listeners). What is left is only whether the *site* re-accepts
+  the session.
+- **[OPEN]** Does a **provider session** survive a fork? The mechanics are settled — the child
+  inherits the process and the profile (TON-8 above). The egress-IP half of this question is
+  **withdrawn**: IPs rotate per connection for every box, so there is no fork-specific address
+  change to worry about.
 - **[OPEN]** Concurrency ceiling above 3.
 
 Test the first two against the *actual* provider, not a generic site — success means "the provider
-still accepts the session", not "the cookie file is present."
+still accepts the session", not "the cookie file is present." **And assert on rendered DOM text,
+not on `response.status()`** — OpenTable serves its block page as a 200 in some paths.
 
 ## Cost [DOC]
 

@@ -4,7 +4,7 @@
   "version": "1",
   "description": "Book a restaurant table for dinner",
   "utterance_examples": [
-    "book a table for two on friday at seven, somewhere italian"
+    "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven."
   ],
   "slots": [
     {
@@ -13,7 +13,7 @@
       "required": true,
       "description": "the number of people dining",
       "prompt": "How many people?",
-      "example": "2"
+      "example": "two"
     },
     {
       "name": "cuisine",
@@ -24,12 +24,20 @@
       "example": "Italian"
     },
     {
+      "name": "city",
+      "type": "string",
+      "required": true,
+      "description": "the city to book in",
+      "prompt": "Which city?",
+      "example": "San Francisco"
+    },
+    {
       "name": "date",
       "type": "string",
       "required": true,
       "description": "the day of the reservation",
       "prompt": "What day?",
-      "example": "Friday"
+      "example": "tomorrow"
     },
     {
       "name": "time",
@@ -37,7 +45,7 @@
       "required": true,
       "description": "the reservation time",
       "prompt": "What time?",
-      "example": "7:00 PM"
+      "example": "seven"
     }
   ],
   "steps": [
@@ -48,17 +56,8 @@
       "arguments": {
         "party_size": "{{party_size}}",
         "cuisine": "{{cuisine}}",
+        "city": "{{city}}",
         "date": "{{date}}",
-        "time": "{{time}}"
-      },
-      "irreversible": false
-    },
-    {
-      "id": "select",
-      "action": "restaurant.select",
-      "description": "Take the best-ranked result offering the requested time",
-      "arguments": {
-        "rank": 1,
         "time": "{{time}}"
       },
       "irreversible": false
@@ -70,11 +69,12 @@
       "arguments": {
         "party_size": "{{party_size}}",
         "cuisine": "{{cuisine}}",
+        "city": "{{city}}",
         "date": "{{date}}",
         "time": "{{time}}"
       },
       "irreversible": true,
-      "confirmation_prompt": "Table for {{party_size}} {{cuisine}} on {{date}} at {{time}}. Should I confirm?"
+      "confirmation_prompt": "Table for {{party_size}} {{cuisine}} in {{city}} on {{date}} at {{time}}. Should I confirm?"
     }
   ]
 }

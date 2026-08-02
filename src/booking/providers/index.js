@@ -8,28 +8,32 @@
 //     Pure function: pick the matching slot out of `results`, or null if nothing matches.
 //     No page access — keeps the matching logic testable without a browser.
 //
-//   book(page, slot, guestInfo) -> Promise<{ confirmationRef: string, raw: unknown }>
-//     Drives the UI through to a completed booking. guestInfo is the loaded guest profile
-//     (firstName, lastName, phone, email) for providers whose checkout needs contact info
-//     without a full account (see providers/resy.js, guestProfile.js). Must throw rather than
-//     return a falsy confirmationRef — book.js treats a missing ref as "not actually booked."
+//   book(page, slot) -> Promise<{ confirmationRef: string, raw: unknown }>
+//     Drives the UI through to a completed booking. Must throw rather than return a falsy
+//     confirmationRef — book.js treats a missing ref as "not actually booked." Confirm against
+//     the provider's own record of the booking, never a confirmation banner: see resy.js.
 //
 //   cancel(page, record) -> Promise<void>
 //     Cancels the booking identified by record.confirmationRef. Must be safe to call with
 //     nothing else going on in the page (resetScript calls this unattended between rehearsals).
 //
-// Provider status as of 2026-08-02:
+// PROVIDER STATUS (TON-8, verified live from the booking Sailbox):
 //
-//   opentable.js — dead from this environment. The domain is blocked at the network edge
-//     (Akamai "Access Denied") before any page loads, login or no login. Selectors were never
-//     verified live and can't be from here.
+//   resy      — CHOSEN AND VERIFIED. A real reservation was made through this adapter and
+//               cancelled again, both confirmed against the Resy account. Selectors read off
+//               the live DOM, not guessed.
 //
-//   resy.js — the live path. Guest checkout needs no account (verified live: a real venue's
-//     "Reserve Now" sits behind no login wall), which sidesteps the session-persistence problem
-//     TON-8 hit entirely. Search, slot selection, and reaching the reservation modal are verified
-//     live. The guest contact-info screen and the true final submit are NOT — completing that
-//     live would create a real reservation, which needs a human's go-ahead first. Smoke-test that
-//     last stretch, watching, before trusting it unattended.
+//   opentable — UNUSABLE FROM SAIL. Akamai answers 403 "Access Denied" to its search, city
+//               and restaurant pages from Sail's egress, in a real Chromium with a real
+//               browser fingerprint, from three separate Sail IPs. Its selectors below remain
+//               unverified guesses because the pages cannot be loaded from here. Kept as a
+//               reference implementation of this contract.
+//
+// GUEST CHECKOUT DOES NOT EXIST ON RESY — tested, so nobody rebuilds it. From a forked box on
+// raw Sail egress with all cookies cleared, clicking "Reserve Now" as a guest opens Resy's
+// account wall ("Please enter your mobile phone number to verify or create an account"), not a
+// contact form. Booking requires an account, and creating one hits /4/auth/mobile, which Sail's
+// egress is blocked from. Hence the session-import + egress-proxy setup in scripts/.
 
 import * as opentable from "./opentable.js";
 import * as resy from "./resy.js";
