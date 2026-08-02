@@ -209,8 +209,51 @@ runbook-cold-task-demo --delay 0.2 \
 ```
 
 This coordinator intentionally performs no bookings or other irreversible side
-effects. A real agent runner can implement `ColdTaskWorker` later while keeping
-the same lifecycle and callback contract.
+effects. The real worker is `BranchingSearch` below, which implements
+`ColdTaskWorker` and keeps the same lifecycle and callback contract.
+
+## Branching search (TON-13)
+
+`BranchingSearch` is the cold path: one unknown request is attempted three ways
+at once, and the three trajectories become the input to the judge (TON-19) and
+the distiller (TON-21). It emits
+[`schema/trajectory.schema.json`](schema/trajectory.schema.json) exactly.
+
+```bash
+runbook-branch-search-demo "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven."
+```
+
+One base Sailbox is booted and seeded, then **checkpointed** and fanned out into
+three children — measured at 3.8s median against 11.0s for `fork()` three times,
+and the checkpoint outlives the parent. Each child runs `branch_agent.py`, a
+stdlib-only program shipped into the box verbatim, which drives its own agent
+loop against Sail's inference API and records every step it takes.
+
+Two details are load-bearing rather than stylistic:
+
+- The base box is seeded **to completion before** it is checkpointed, and the
+  branch agent is launched **detached** (`setsid nohup`). Anything tied to an
+  in-flight `exec()` session is reaped in a branched box.
+- Steps are appended to `steps.jsonl` as work happens, and `DONE` is written
+  *after* `trajectory.json`. A branch that dies is salvaged from its step log,
+  and a poller never reads a half-written file.
+
+Each branch is given a genuinely different approach (`DEFAULT_ANGLES`), and
+duplicate directives are refused up front — identical prompts produce identical
+trajectories and the judge has nothing to compare. Trajectories capture what was
+tried, **including dead ends**, because final answers alone leave the distiller
+with nothing to turn into steps.
+
+**Branches never book.** They research and do in-box work; the irreversible step
+happens once, later, behind the confirmation gate. That holds structurally
+(nothing here can reach `RunbookExecutor`), by capability (a branch has no
+confirmation gate), and by a guard that refuses write-shaped requests before they
+run — recording the blocked attempt as an abandoned step rather than hiding it.
+
+Output lands in `runs/<job_id>/` (gitignored). It is deliberately not
+`fixtures/trajectories/`, which holds the locked hand-written examples that
+`schema/validate.py` checks.
+
 
 ## Demo operations
 

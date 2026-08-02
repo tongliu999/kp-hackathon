@@ -131,6 +131,96 @@ Minimum viable schema, so nobody designs one at hour 12:
 
 Keep Voyages as a demo visual if it's free to add. Nothing depends on it.
 
+## Branching search — what TON-13 shipped [VERIFIED]
+
+Lives in `src/runbook_voice/branch_search.py` (orchestration) and
+`src/runbook_voice/branch_agent.py` (the program that runs *inside* each box).
+`BranchingSearch` satisfies `ColdTaskWorker`, so it drops into TON-14's coordinator.
+
+### Sail serves inference too — this changes what a branch can be
+
+The Voyages finding above is right (write-only, not a data source) but it left the
+impression Sail is only infrastructure. It is not: **Sail serves models**, OpenAI-compatible
+at `https://api.sailresearch.com/v1`, on the same credential. So a branch runs a *real* agent
+loop **inside its own box** with no third-party API key.
+
+- `sail.Config.from_env().api_key` resolves a key from `SAIL_API_KEY` **or** from the
+  credential `sail auth login` stored in `~/.sail/auth.toml` [VERIFIED]. That is what the
+  orchestrator hands the guest — in `env=` on the launch command, never written to box disk.
+- Models: `zai-org/GLM-5.2-FP8` (used here), `moonshotai/Kimi-K2.6`, `openai/gpt-oss-120b`,
+  `Qwen/Qwen3.6-35B-A3B`, `google/gemma-4-31B-it`, `nvidia/*` [DOC].
+- **Completion windows are the latency knob**, and the default is the wrong one for an agent
+  loop: `standard` (the default) targets ~5 min/turn, `priority` ~1 min, `asap` immediate
+  [DOC]. Branches set `metadata.completion_window = "priority"` — each turn feeds the next, so
+  8 steps at `standard` would be a ~40-minute branch. Measured single trivial turn at
+  `priority`: **8.4s** [VERIFIED].
+- *"You are not charged while a Sailbox is … cold-starting"*, and Sailboxes
+  *"automatically sleep while waiting on Sail inference calls"* [DOC] — branch idle is cheap.
+
+### The base image has what a branch needs [VERIFIED — probed on prod]
+
+`python3` **3.11.2** and `curl` are both already in the Debian base image, the guest reaches
+`api.sailresearch.com` (HTTP 200) and the open web (HTTP 200), and the shipped agent
+byte-compiles in the box. So there is **no `pip install` and no `apt-get` on the hot path** —
+the seed step is 0.3s. The agent program is stdlib-only for exactly this reason, and is
+shipped by writing its own source into the box with `fs.write`.
+
+### Shape, and why
+
+1. boot one base box (`app=branch-search`) → 2. seed it **synchronously** → 3. `checkpoint()`
+→ 4. three `from_checkpoint()` children concurrently → 5. each child launches the agent
+**detached** and the orchestrator polls for a `DONE` marker → 6. read back, validate, persist
+→ 7. terminate everything in a `finally`.
+
+Steps 2 and 3 are ordered that way on purpose: an `exec()` in flight is reaped in the
+children, so the seed must finish first. Step 5 is detached for the same reason. The base box
+exists so python3 and the agent are inherited once rather than installed three times.
+
+`DONE` is written *after* `trajectory.json`, so a poller never reads a half-written file, and
+steps are appended to `steps.jsonl` as they happen — a branch that dies is salvaged from its
+step log rather than lost. A partial trajectory is evidence; a missing one is a hole in the
+comparison.
+
+### Invariant 1, in code
+
+Branches research and do in-box work. **Branches never book.** Three layers:
+
+1. **Structural** — `branch_search.py` does not import `executor.py`. `RunbookExecutor` and
+   `ConfirmationGate`, the only code that performs a gated irreversible step, are unreachable
+   from a branch. A test parses the module's AST to assert it, rather than grepping.
+2. **Capability** — a branch's tools are in-box shell and HTTP reads. It holds no
+   confirmation gate, and `RunbookExecutor` denies when the gate is missing.
+3. **Guard** — `branch_agent.screen_command` refuses write-shaped requests (`-X POST/PUT/
+   PATCH/DELETE`, a request body, or a committing path like `/checkout`) *before* they run. A
+   blocked attempt is recorded as `outcome: "abandoned"` with a note rather than dropped, so
+   the judge can see that a branch reached for the irreversible step and was stopped. It
+   fired on a real run, exactly as intended.
+
+   **The guard screens for write shape, not for booking vocabulary** [VERIFIED the hard way].
+   The first version also refused any URL containing `book`/`reserv`, and a branch reported in
+   its own final answer that *"the environment's guard blocked all my live-availability
+   fetches"*. That rule was wrong twice over: a GET is not irreversible, and reaching the page
+   that offers the booking is the branch's **success condition**, not a violation. The
+   irreversible step is the submission.
+
+### Two things measured on real runs that the design depends on
+
+- **Tell the agent its step budget.** First run: all three branches spent every step
+  investigating, hit `step_budget_exhausted`, and returned **no final answer at all**. The
+  model cannot ration a budget it cannot see. After stating the budget in the prompt and
+  appending `[N steps left.]` to every tool result (with a forced wrap-up on the last),
+  all three produced real answers. Same infra, same model — the difference is entirely that
+  the agent knew when to stop.
+- **Tell it not to swallow exit codes.** `outcome` comes from the shell exit code, and an
+  agent writing `cmd; echo EXIT $?` records five consecutive failures as `ok`. That corrupts
+  precisely the field the judge ranks on.
+
+Per-branch wall time is ~2 minutes for 10-12 steps at `priority`, and the three run
+concurrently — so the cold path is ~2.5 minutes end to end, of which infrastructure is ~4.5s.
+
+Output lands in `runs/<job_id>/b{0,1,2}.json` (gitignored) — **not** `fixtures/trajectories/`,
+which holds the locked hand-written examples `schema/validate.py` checks.
+
 ## Credential injection — possibly relevant to TON-8 [VERIFIED api, [OPEN] fit]
 
 Sail ships a first-class secret/credential-injection system:

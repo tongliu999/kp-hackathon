@@ -12,3 +12,6 @@ runbooks.json
 node_modules/
 .DS_Store
 .sailbox-demo.json
+# Live branching-search output. fixtures/trajectories/ holds the locked
+# hand-written examples; real runs must not be mixed into them.
+runs/
