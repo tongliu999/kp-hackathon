@@ -6,6 +6,9 @@ yarn-debug.log*
 yarn-error.log*
 
 .claude/settings.local.json
+# Claude Code's own worktrees. Each is a git repo; committing one embeds a
+# repo-inside-a-repo that no clone can resolve.
+.claude/worktrees/
 
 .env
 .env.*
@@ -20,6 +23,10 @@ build/
 *.egg-info/
 runbooks.json
 .sailbox-demo.json
+# runbook-demo runtime state: the store is rebuilt from demo/handwritten_runbook.json
+# on every run, and bookings.json is live booking state, not source.
+demo/runbook-store.json*
+demo/bookings.json
 # Live branching-search output. fixtures/trajectories/ holds the locked
 # hand-written examples; real runs must not be mixed into them.
 runs/

@@ -50,12 +50,27 @@ async def test_book_succeeds_once_confirmation_is_declared_upstream(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_real_mode_refuses_rather_than_degrading_to_stub(tmp_path):
-    """No authenticated page yet (TON-8). Refusing is right; pretending is not."""
-    live = runner(tmp_path, stub=False, confirmation_is_upstream=True)
+async def test_real_mode_never_silently_degrades_to_stub(tmp_path):
+    """Real mode must fail loudly when it cannot reach the box, never fake a booking.
+
+    Asserts the property, not the message: the reason real mode is unavailable
+    changes as TON-8 evolves (it has already gone from "no authenticated page"
+    to a Sailbox delegation error), but "refuses rather than stubs" must not.
+    """
+    store = tmp_path / "bookings.json"
+    # Short timeout: real mode reaches into the Sailbox, and this suite must not
+    # depend on the network or spend 3 minutes proving a refusal. What is being
+    # asserted is the refusal itself, not the reason for it.
+    live = runner(
+        tmp_path, stub=False, store_path=store, confirmation_is_upstream=True, timeout=5
+    )
     assert live.stub is False
-    with pytest.raises(BookingBridgeError, match="authenticated browser session"):
+
+    with pytest.raises(BookingBridgeError):
         await live.execute("restaurant.book", SLOTS)
+
+    open_bookings = await runner(tmp_path, store_path=store).execute("booking.list_open", {})
+    assert open_bookings["open"] == [], "a failed real booking must leave nothing behind"
 
 
 @pytest.mark.asyncio
