@@ -59,6 +59,7 @@
           <button id="refresh-agents" class="square-button" type="button" aria-label="Refresh completed agents">↻</button>
         </div>
         <label class="run-search"><span aria-hidden="true">⌕</span><input id="agent-search" type="search" placeholder="Filter agents" /></label>
+        <section id="agent-active-run" class="agent-active-run hidden" aria-live="polite"></section>
         <div id="agent-list" class="run-list agent-list" aria-live="polite"></div>
         <div class="sidebar-footer agent-reuse-note">
           <strong>Warm path</strong>
@@ -116,7 +117,10 @@
             <h1>Completed agents</h1>
             <p>Inspect a learned runbook, supply its inputs, and replay it without another fan-out.</p>
           </div>
-          <div class="warm-path-badge"><span>0</span> new branches</div>
+          <div class="agents-heading-actions">
+            <div class="warm-path-badge"><span>0</span> new branches</div>
+            <button id="new-agent-button" class="new-agent-button" type="button">＋ New agent</button>
+          </div>
         </header>
         <div id="agent-match-message" class="agent-match-message" role="status" aria-live="polite"></div>
         <section id="agent-detail" class="agent-detail">

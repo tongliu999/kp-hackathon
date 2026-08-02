@@ -92,7 +92,7 @@ test("console server uses a fixed task allowlist without a shell", () => {
 test("console exposes completed agents and routes matching prompts to warm replay", () => {
   for (const id of [
     "show-agents", "agents-sidebar", "agent-list", "agents-workspace",
-    "agent-detail", "agent-output",
+    "agent-detail", "agent-output", "agent-active-run", "new-agent-button",
   ]) {
     assert.ok(html.includes(`id="${id}"`), id);
   }
@@ -103,6 +103,9 @@ test("console exposes completed agents and routes matching prompts to warm repla
   assert.match(app, /Use completed agent/);
   assert.match(app, /startAgentReplay/);
   assert.match(app, /runMatchedAgent/);
+  assert.match(app, /renderAgentActiveRun/);
+  assert.match(app, /Agent running/);
+  assert.match(app, /View run/);
   assert.match(app, /prefilledSlots/);
   assert.match(app, /inputSource/);
   assert.match(server, /\/api\/agents\/match/);

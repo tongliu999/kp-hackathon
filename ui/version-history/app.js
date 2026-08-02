@@ -11,6 +11,7 @@ const agentRunLabel = document.querySelector("#agent-run-label");
 const agentStopButton = document.querySelector("#agent-stop-run");
 const microphoneButton = document.querySelector("#microphone-button");
 const voiceState = document.querySelector("#voice-state");
+const agentActiveRun = document.querySelector("#agent-active-run");
 
 let histories = [];
 let completedAgents = [];
@@ -136,6 +137,36 @@ function upsertWorkflowHistory(run, { select = false } = {}) {
   else renderRunList();
 }
 
+function renderAgentActiveRun(run) {
+  if (!run || run.task !== "replay") {
+    agentActiveRun.replaceChildren();
+    agentActiveRun.className = "agent-active-run hidden";
+    return;
+  }
+  agentActiveRun.className = `agent-active-run ${run.status}`;
+  const heading = element("div", "active-run-heading");
+  heading.append(
+    element("span", "active-run-state", run.status === "succeeded" ? "Agent completed" : run.status === "running" ? "Agent running" : run.status),
+    element("span", "run-source", run.inputSource ?? "typed")
+  );
+  const view = element("button", "", run.id ? "View run →" : "Starting…");
+  view.type = "button";
+  view.disabled = !run.id;
+  view.addEventListener("click", () => {
+    switchWorkspace("runs");
+    const history = histories.find(
+      (item) => item.workflowId === run.id || item.id === `workflow:${run.id}` || item.id === `replay:${run.id}`
+    );
+    if (history) selectRun(history);
+  });
+  agentActiveRun.replaceChildren(
+    heading,
+    element("strong", "", compact(run.request || run.label, 78)),
+    element("p", "", `${run.agentId} · ${run.parentPhase ?? "starting saved runbook"}`),
+    view
+  );
+}
+
 function setConsoleState(status, label) {
   consoleState.className = `console-state ${status}`;
   consoleState.querySelector("span").textContent = label;
@@ -168,8 +199,22 @@ async function loadHistory({ preferPrompt } = {}) {
   );
   if (activeWorkflow && !activeRunId) {
     activeRunId = activeWorkflow.workflowId;
+    activeRunTask = activeWorkflow.runKind === "replay" ? "replay" : "fanout";
     lastFanoutPrompt = activeWorkflow.task;
-    runLabel.textContent = "Adaptive Sail tree + learn";
+    if (activeRunTask === "replay") {
+      agentRunLabel.textContent = `Reuse completed agent · ${activeWorkflow.agentId}`;
+      renderAgentActiveRun({
+        id: activeWorkflow.workflowId,
+        task: "replay",
+        status: activeWorkflow.workflowStatus,
+        request: activeWorkflow.task,
+        agentId: activeWorkflow.agentId,
+        inputSource: activeWorkflow.source,
+        parentPhase: activeWorkflow.workflowPhase,
+      });
+    } else {
+      runLabel.textContent = "Adaptive Sail tree + learn";
+    }
     setConsoleState(activeWorkflow.workflowStatus, activeWorkflow.workflowStatus === "stopping" ? "Stopping safely" : "Running");
     pollTimer = window.setTimeout(pollRun, 100);
   }
@@ -605,6 +650,7 @@ async function pollRun() {
     output.textContent = run.output;
     output.scrollTop = output.scrollHeight;
     upsertWorkflowHistory(run);
+    if (replaying) renderAgentActiveRun(run);
     if (run.status === "running" || run.status === "stopping") {
       setConsoleState(run.status, run.status === "stopping" ? "Stopping safely" : "Running");
       pollTimer = window.setTimeout(pollRun, 700);
@@ -1074,6 +1120,15 @@ async function startAgentReplay(event, { confirmedOverride = null, inputSource =
   if (!selectedAgent) return;
   setConsoleState("running", "Reusing agent");
   agentOutput.textContent = "Starting saved runbook…";
+  renderAgentActiveRun({
+    id: null,
+    task: "replay",
+    status: "running",
+    request: selectedAgentRequest || selectedAgent.name,
+    agentId: selectedAgent.id,
+    inputSource,
+    parentPhase: "starting saved runbook",
+  });
   try {
     const form = event?.currentTarget ?? document.querySelector("#agent-use-form");
     const body = {
@@ -1095,10 +1150,21 @@ async function startAgentReplay(event, { confirmedOverride = null, inputSource =
     activeRunTask = "replay";
     agentRunLabel.textContent = run.label;
     agentOutput.textContent = run.output;
+    upsertWorkflowHistory(run);
+    renderAgentActiveRun(run);
     await pollRun();
   } catch (error) {
     agentOutput.textContent = `[warm path] ${error.message}`;
     setConsoleState("failed", "Replay failed");
+    renderAgentActiveRun({
+      id: null,
+      task: "replay",
+      status: "failed",
+      request: selectedAgentRequest || selectedAgent.name,
+      agentId: selectedAgent.id,
+      inputSource,
+      parentPhase: error.message,
+    });
     activeRunId = null;
     activeRunTask = null;
   }
@@ -1326,6 +1392,12 @@ function renderAuth() {
 }
 
 document.querySelectorAll("[data-workspace]").forEach((button) => button.addEventListener("click", () => switchWorkspace(button.dataset.workspace)));
+document.querySelector("#new-agent-button").addEventListener("click", () => {
+  switchWorkspace("runs");
+  const composer = document.querySelector("#fanout-request");
+  composer.focus();
+  composer.select();
+});
 document.querySelector("#refresh-auth").addEventListener("click", loadAuth);
 document.querySelector("#refresh-agents").addEventListener("click", loadAgents);
 document.querySelector("#agent-search").addEventListener("input", renderAgentList);

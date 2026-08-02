@@ -264,6 +264,19 @@ judge and distill controls remain available for inspection or reruns, alongside
 output and authentication management. Development checks remain available from the
 command line, but are intentionally not exposed as console actions.
 
+The same new-agent learning flow is available from the CLI for automation:
+
+```bash
+python -m runbook_voice.branch_search_demo \
+  "Research and build a reusable workflow for this task" \
+  --out runs --max-branches 5 --max-depth 3 \
+  --runbook-store demo/runbook-store.json
+```
+
+This runs the adaptive search and writes the learned agent into the same store the
+UI reads. The **New agent** button in the Agents header opens the equivalent prompt
+composer without requiring a command.
+
 The prompt composer also accepts microphone input. Click **Speak**; if the local
 server has no `OPENAI_API_KEY`, the UI asks for one once and keeps it only in that
 server process (it is not written to the repository). Say the complete request and
