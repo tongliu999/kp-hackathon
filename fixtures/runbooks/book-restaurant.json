@@ -70,7 +70,7 @@
       "action": "restaurant.book",
       "description": "Place the reservation",
       "arguments": {
-        "provider": "opentable",
+        "provider": "resy",
         "party_size": "{{party_size}}",
         "cuisine": "{{cuisine}}",
         "city": "{{city}}",

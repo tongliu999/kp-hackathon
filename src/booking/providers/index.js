@@ -8,20 +8,28 @@
 //     Pure function: pick the matching slot out of `results`, or null if nothing matches.
 //     No page access — keeps the matching logic testable without a browser.
 //
-//   book(page, slot) -> Promise<{ confirmationRef: string, raw: unknown }>
-//     Drives the UI through to a completed booking. Must throw rather than return a falsy
-//     confirmationRef — book.js treats a missing ref as "not actually booked."
+//   book(page, slot, guestInfo) -> Promise<{ confirmationRef: string, raw: unknown }>
+//     Drives the UI through to a completed booking. guestInfo is the loaded guest profile
+//     (firstName, lastName, phone, email) for providers whose checkout needs contact info
+//     without a full account (see providers/resy.js, guestProfile.js). Must throw rather than
+//     return a falsy confirmationRef — book.js treats a missing ref as "not actually booked."
 //
 //   cancel(page, record) -> Promise<void>
 //     Cancels the booking identified by record.confirmationRef. Must be safe to call with
 //     nothing else going on in the page (resetScript calls this unattended between rehearsals).
 //
-// Selectors in the concrete adapters (opentable.js, resy.js) are a first pass built against
-// each site's public reservation-widget structure using role-based locators, chosen specifically
-// to survive minor markup changes. They have not been run against a live authenticated session —
-// that requires the human login step from TON-8 (real credentials, 2FA/CAPTCHA can't be automated
-// or delegated to an assistant). Smoke-test whichever provider gets chosen against the live box
-// before relying on it for a rehearsal.
+// Provider status as of 2026-08-02:
+//
+//   opentable.js — dead from this environment. The domain is blocked at the network edge
+//     (Akamai "Access Denied") before any page loads, login or no login. Selectors were never
+//     verified live and can't be from here.
+//
+//   resy.js — the live path. Guest checkout needs no account (verified live: a real venue's
+//     "Reserve Now" sits behind no login wall), which sidesteps the session-persistence problem
+//     TON-8 hit entirely. Search, slot selection, and reaching the reservation modal are verified
+//     live. The guest contact-info screen and the true final submit are NOT — completing that
+//     live would create a real reservation, which needs a human's go-ahead first. Smoke-test that
+//     last stretch, watching, before trusting it unattended.
 
 import * as opentable from "./opentable.js";
 import * as resy from "./resy.js";

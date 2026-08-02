@@ -1,5 +1,7 @@
-// OpenTable adapter — see providers/index.js for the contract and the caveat about
-// selectors being unverified against a live session (blocked on TON-8's human login).
+// OpenTable adapter — DEAD from this environment as of 2026-08-02: the domain is blocked
+// at the network edge (Akamai "Access Denied") before any page loads. Selectors below were
+// never verified live and can't be from here. Kept for interface parity / in case a future
+// environment reaches the domain fine; use resy.js instead. See providers/index.js.
 
 const BASE_URL = "https://www.opentable.com";
 
@@ -29,7 +31,7 @@ export function selectSlot(results, { time }) {
   return results.find((r) => r.label.includes(time)) ?? null;
 }
 
-export async function book(page, slot) {
+export async function book(page, slot, _guestInfo) {
   await slot.handle.click();
   const confirmButton = page.getByRole("button", { name: /confirm reservation|complete reservation/i });
   await confirmButton.waitFor({ state: "visible", timeout: 15_000 });

@@ -68,19 +68,107 @@ function toBookingParams(args) {
 }
 
 /**
- * The live Playwright page for the authenticated Sailbox session (TON-8).
+ * This process is either running on the laptop (default) or has been
+ * re-invoked INSIDE the persistent "booking" Sailbox by delegateToSailbox()
+ * below. Only the in-box copy can reach the browser: the Sailbox's Chromium
+ * exposes its debug port on 127.0.0.1 only, deliberately never on a public
+ * interface, because CDP has no built-in auth of its own - whoever can reach
+ * it fully controls the browser, cookies and all. Tunneling that out to the
+ * open internet (the way the VNC bridge did for a *password-protected*
+ * viewer) is not a tradeoff worth making for this.
+ */
+const INSIDE_SAILBOX = process.env.BOOKING_BRIDGE_INSIDE_SAILBOX === "1";
+
+/**
+ * Reuses exactly one tab in the persistent session, closing any others.
  *
- * This is the ONE place real mode is still unwired, deliberately kept to a
- * single function so TON-8 has an obvious seam to land in. Until then real
- * mode refuses; it never silently degrades to stub, because a stub run that
- * looked real would be the worst thing this bridge could do.
+ * The box stays up across every rehearsal and every step within a run, and
+ * nothing here ever closes a tab it opened - so stray tabs from a previous
+ * step (or from interactive debugging against this same box) accumulate.
+ * Found live: 5 open tabs, one on a chrome-error page, turned a 1s navigation
+ * into a 30s timeout. Enforcing a single tab is cheap insurance against that
+ * recurring during a rehearsal.
  */
 async function acquirePage() {
-  throw new Error(
-    "no authenticated browser session available: real bookings need the " +
-      "persistent Sailbox page from TON-8. Set BOOKING_STUB_MODE=1 to exercise " +
-      "the full path without contacting a provider."
-  );
+  if (!INSIDE_SAILBOX) {
+    throw new Error("acquirePage() must only run inside the Sailbox — see delegateToSailbox().");
+  }
+  const { chromium } = await import("playwright");
+  const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");
+  const context = browser.contexts()[0];
+  const pages = context.pages();
+  const [keep, ...stray] = pages.length > 0 ? pages : [await context.newPage()];
+  await Promise.all(stray.map((p) => p.close().catch(() => {})));
+  return keep;
+}
+
+/**
+ * Files the in-box copy of this bridge needs, mirrored under the same
+ * relative layout (scripts/booking_bridge.mjs importing ../src/booking/*) so
+ * its own `import` statements resolve unmodified once copied over.
+ */
+const SYNCED_FILES = [
+  "scripts/booking_bridge.mjs",
+  "src/booking/book.js",
+  "src/booking/confirmGate.js",
+  "src/booking/store.js",
+  "src/booking/stubMode.js",
+  "src/booking/guestProfile.js",
+  "src/booking/paymentGuard.js",
+  "src/booking/resetScript.js",
+  "src/booking/providers/index.js",
+  "src/booking/providers/opentable.js",
+  "src/booking/providers/resy.js",
+];
+const REMOTE_ROOT = "/root/booking/repo";
+
+async function syncToSailbox(box) {
+  const { readFile } = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const localRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+  for (const relative of SYNCED_FILES) {
+    const contents = await readFile(path.join(localRoot, relative), "utf8");
+    await box.fs.write(`${REMOTE_ROOT}/${relative}`, contents);
+  }
+}
+
+/**
+ * Re-invokes this same script inside the Sailbox with the original request on
+ * stdin, over the Sail SDK's run() (no network port opened at all - the SDK
+ * is the transport). Only reached for restaurant.search / restaurant.book in
+ * real mode; stub mode and booking.reset/list_open never touch a page and
+ * stay local.
+ */
+async function delegateToSailbox(request) {
+  const { Sailbox } = await import("@sailresearch/sdk");
+  const boxes = await Sailbox.list({ limit: 50 });
+  const box = boxes.find((b) => (b.name ?? "") === "booking");
+  if (!box) {
+    throw new Error(
+      'no Sailbox named "booking" found — has the TON-8 persistent box been created?'
+    );
+  }
+
+  await syncToSailbox(box);
+  await box.fs.write(`${REMOTE_ROOT}/request.json`, JSON.stringify(request));
+
+  const storeEnv = process.env.BOOKING_STORE_PATH
+    ? ` BOOKING_STORE_PATH=${JSON.stringify(process.env.BOOKING_STORE_PATH)}`
+    : "";
+  const command =
+    `cd ${REMOTE_ROOT} && BOOKING_BRIDGE_INSIDE_SAILBOX=1${storeEnv} ` +
+    `node scripts/booking_bridge.mjs < request.json`;
+  const res = await box.run(command, { timeout: 120_000 });
+
+  const lastLine = (res.stdout ?? "").trim().split("\n").filter(Boolean).pop();
+  if (!lastLine) {
+    throw new Error(`Sailbox bridge produced no output: ${(res.stderr ?? "").slice(0, 500)}`);
+  }
+  const payload = JSON.parse(lastLine);
+  if (!payload.ok) throw new Error(payload.error);
+  return payload.result;
 }
 
 /**
@@ -93,10 +181,14 @@ async function acquirePage() {
  * ones do, which is the only property that makes a stub rehearsal meaningful.
  */
 function resolveProvider(args) {
-  const name = args.provider ?? "opentable";
+  // opentable is network-blocked from this environment (Akamai edge denial) —
+  // resy is the only reachable provider as of 2026-08-02. See providers/index.js.
+  const name = args.provider ?? "resy";
   getProvider(name); // throws with the list of known providers
   return name;
 }
+
+const PAGE_ACTIONS = new Set(["restaurant.search", "restaurant.book"]);
 
 async function handle(request) {
   const { action, arguments: args = {}, confirmed = false } = request;
@@ -108,6 +200,13 @@ async function handle(request) {
         "confirmation. The spoken gate in RunbookExecutor is authoritative; " +
         "this endpoint will not book on its own."
     );
+  }
+
+  // Real (non-stub) search/book need the live browser, which only exists
+  // inside the Sailbox. Hop over once, here, rather than threading that
+  // decision through every case below.
+  if (!isStubMode() && !INSIDE_SAILBOX && PAGE_ACTIONS.has(action)) {
+    return delegateToSailbox(request);
   }
 
   switch (action) {

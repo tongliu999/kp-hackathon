@@ -10,6 +10,12 @@ import { ConfirmationAbortedError } from "../confirmGate.js";
 import { registerProvider } from "../providers/index.js";
 
 const STUB_ENV = { BOOKING_STUB_MODE: "1" };
+const GUEST_ENV = {
+  BOOKING_GUEST_FIRST_NAME: "Jamie",
+  BOOKING_GUEST_LAST_NAME: "Rivera",
+  BOOKING_GUEST_PHONE: "555-010-1234",
+  BOOKING_GUEST_EMAIL: "jamie.rivera@example.com",
+};
 const PARAMS = { restaurant: "Test Bistro", date: "2026-08-05", time: "7:00 PM", partySize: 2 };
 
 async function withTempStore(fn) {
@@ -113,7 +119,7 @@ test("bookStep fails loud on empty search results instead of guessing", async ()
           page: {},
           getYes: async () => "yes",
           storePath,
-          env: {},
+          env: GUEST_ENV,
         }),
       UnexpectedPageStateError
     );
@@ -140,7 +146,7 @@ test("bookStep fails loud when no result matches the requested slot", async () =
           page: {},
           getYes: async () => "yes",
           storePath,
-          env: {},
+          env: GUEST_ENV,
         }),
       UnexpectedPageStateError
     );
@@ -164,7 +170,7 @@ test("bookStep treats a missing confirmationRef as not booked", async () => {
           page: {},
           getYes: async () => "yes",
           storePath,
-          env: {},
+          env: GUEST_ENV,
         }),
       UnexpectedPageStateError
     );
@@ -172,12 +178,44 @@ test("bookStep treats a missing confirmationRef as not booked", async () => {
   });
 });
 
-test("a successful real booking records to the store and cancels via makeCancelFn", async () => {
+test("bookStep refuses real mode without a complete guest profile, before touching the provider", async () => {
+  registerProvider("fake-guest-check", {
+    search: async () => {
+      throw new Error("should never be called");
+    },
+    selectSlot: () => null,
+    book: async () => {
+      throw new Error("should never be called");
+    },
+    cancel: async () => {},
+  });
+
+  await withTempStore(async (storePath) => {
+    await assert.rejects(
+      () =>
+        bookStep({
+          provider: "fake-guest-check",
+          params: PARAMS,
+          page: {},
+          getYes: async () => "yes",
+          storePath,
+          env: {},
+        }),
+      /Guest profile is missing required field/
+    );
+  });
+});
+
+test("a successful real booking records to the store, passes guestInfo through, and cancels via makeCancelFn", async () => {
   const cancelCalls = [];
+  let receivedGuestInfo = null;
   registerProvider("fake-real", {
     search: async () => [{ label: "7:00 PM" }],
     selectSlot: (results) => results[0],
-    book: async () => ({ confirmationRef: "REAL-CONF-1", raw: { ok: true } }),
+    book: async (page, slot, guestInfo) => {
+      receivedGuestInfo = guestInfo;
+      return { confirmationRef: "REAL-CONF-1", raw: { ok: true } };
+    },
     cancel: async (page, record) => cancelCalls.push(record.confirmationRef),
   });
 
@@ -189,10 +227,16 @@ test("a successful real booking records to the store and cancels via makeCancelF
       page: fakePage,
       getYes: async () => "yes",
       storePath,
-      env: {},
+      env: GUEST_ENV,
     });
     assert.equal(booking.confirmationRef, "REAL-CONF-1");
     assert.equal(booking.stub, false);
+    assert.deepEqual(receivedGuestInfo, {
+      firstName: "Jamie",
+      lastName: "Rivera",
+      phone: "555-010-1234",
+      email: "jamie.rivera@example.com",
+    });
 
     const { cancelled } = await resetAll({ storePath, cancelFn: makeCancelFn(fakePage) });
     assert.deepEqual(cancelled, ["REAL-CONF-1"]);
