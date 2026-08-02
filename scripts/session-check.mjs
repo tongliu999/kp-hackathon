@@ -13,6 +13,10 @@
 // anything, and returns "unknown" rather than guessing when it cannot tell.
 
 const LOGGED_OUT = '[data-test-id="menu_container-button-log_in"]';
+// The account avatar. Rendered ONLY when signed in, so this is positive
+// evidence rather than the absence of something -- confirmed by --discover
+// against a real live session.
+const SIGNED_IN = '[data-test-id="menu_container-button-profile_photo"]';
 // Present signed in or out, so it means "the app rendered", not "you are in".
 const HYDRATED = 'input[placeholder*="Search restaurants" i]';
 
@@ -46,23 +50,28 @@ export async function checkSession(context, { probeUrl = DEFAULT_PROBE_URL } = {
     // Hydration can land the header before the session-dependent controls.
     await page.waitForTimeout(4000);
 
-    const [loggedOut, hydrated] = await Promise.all([
+    const [loggedOut, signedIn, hydrated] = await Promise.all([
       page.locator(LOGGED_OUT).count(),
+      page.locator(SIGNED_IN).count(),
       page.locator(HYDRATED).count(),
     ]);
 
     if (loggedOut > 0) {
       return { state: "logged-out", detail: `"Log in" control present (${loggedOut})` };
     }
-    if (hydrated === 0) {
-      // Neither marker: the page is not the one we think it is (interstitial,
-      // challenge, redirect). Absence of "Log in" proves nothing here.
-      return {
-        state: "unknown",
-        detail: `neither marker found at ${page.url()} — not a page we can read`,
-      };
+    if (signedIn > 0) {
+      return { state: "authenticated", detail: "account avatar rendered" };
     }
-    return { state: "authenticated", detail: "app rendered with no login control" };
+    // No login control AND no avatar. That is not a session -- it is a page we
+    // cannot read (interstitial, challenge, redirect, half-hydrated). Calling
+    // it authenticated here is precisely the mistake this module exists to
+    // prevent.
+    return {
+      state: "unknown",
+      detail: hydrated
+        ? `header rendered but neither login control nor avatar at ${page.url()}`
+        : `page never rendered at ${page.url()}`,
+    };
   } finally {
     await page.close().catch(() => {});
   }

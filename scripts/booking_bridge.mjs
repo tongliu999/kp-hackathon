@@ -24,11 +24,12 @@
 // rather than asking a second time - a second prompt after the user already
 // said yes reads as a bug on stage and trains people to double-approve.
 
-import { bookStep } from "../src/booking/book.js";
+import { bookStep, makeCancelFn } from "../src/booking/book.js";
 import { resetAll } from "../src/booking/resetScript.js";
 import { listOpenBookings } from "../src/booking/store.js";
 import { isStubMode } from "../src/booking/stubMode.js";
 import { getProvider } from "../src/booking/providers/index.js";
+import { acquirePage, releaseBrowser } from "../src/booking/session.js";
 
 const IRREVERSIBLE = new Set(["restaurant.book"]);
 
@@ -65,79 +66,6 @@ function toBookingParams(args) {
   }
   if (params.partySize != null) params.partySize = String(params.partySize);
   return params;
-}
-
-/**
- * The live Playwright page for the authenticated Sailbox session (TON-8).
- *
- * Attaches over CDP to the chromium ALREADY RUNNING in the box -- the same
- * process the human logged in through at the VNC session, launched with
- * --user-data-dir=/root/booking/profile.
- *
- * Deliberately NOT launchPersistentContext() against that directory: chromium
- * holds an exclusive lock on its user-data-dir, so a second instance pointed at
- * the same profile either refuses to start or silently forks a copy of the
- * profile, and the login appears to have vanished.
- *
- * browser.contexts()[0] is the persistent profile's own context. A fresh
- * browser.newContext() would be incognito -- no cookies, no login -- which is
- * the failure sail-notes.md warns passes local testing and dies on stage.
- */
-let cdpBrowser = null;
-const openedPages = [];
-
-async function acquirePage() {
-  const endpoint = process.env.BOOKING_CDP_URL;
-  if (!endpoint) {
-    throw new Error(
-      "no authenticated browser session available: BOOKING_CDP_URL is unset. " +
-        "Run `node scripts/vnc-start.mjs` to bring up the booking Sailbox and " +
-        "print its CDP tunnel URL. Set BOOKING_STUB_MODE=1 to exercise the full " +
-        "path without contacting a provider."
-    );
-  }
-
-  if (!cdpBrowser) {
-    const { chromium } = await import("playwright");
-    try {
-      cdpBrowser = await chromium.connectOverCDP(endpoint);
-    } catch (cause) {
-      throw new Error(
-        `could not attach to the Sailbox browser at ${endpoint}: ${cause.message}. ` +
-          "The box may be paused, or the CDP tunnel's IP allowlist may not cover " +
-          "this machine -- re-run `node scripts/vnc-start.mjs`."
-      );
-    }
-  }
-
-  const context = cdpBrowser.contexts()[0];
-  if (!context) {
-    throw new Error(
-      "attached to the Sailbox browser but it exposes no browser context, so " +
-        "there is no profile to book from."
-    );
-  }
-
-  const page = await context.newPage();
-  openedPages.push(page);
-  return page;
-}
-
-/**
- * Close only the tabs this process opened, and never the browser.
- *
- * browser.close() on a CDP attachment tears down the connection rather than
- * the browser, but leaving tabs behind on every step would pile them up in the
- * session the human is watching over VNC.
- */
-async function releaseBrowser() {
-  for (const page of openedPages.splice(0)) {
-    await page.close().catch(() => {});
-  }
-  if (cdpBrowser) {
-    await cdpBrowser.close().catch(() => {});
-    cdpBrowser = null;
-  }
 }
 
 /**
@@ -199,7 +127,14 @@ async function handle(request) {
     }
 
     case "booking.reset": {
-      const result = await resetAll({ storePath: process.env.BOOKING_STORE_PATH });
+      // A real open booking needs a real cancelFn. Without one resetAll refuses
+      // rather than marking it cancelled in the store while the table stays
+      // held -- so in real mode this must supply the authenticated page.
+      const page = isStubMode() ? undefined : await acquirePage();
+      const result = await resetAll({
+        storePath: process.env.BOOKING_STORE_PATH,
+        cancelFn: page ? makeCancelFn(page) : undefined,
+      });
       return { cancelled: result.cancelled };
     }
 

@@ -23,6 +23,34 @@ const CDP_PROXY_PORT = 9223;
 const VNC_PORT = 6080;
 
 /**
+ * Route the browser's traffic somewhere other than Sail's egress.
+ *
+ * Resy refuses its auth endpoints from datacenter IPs -- measured, identical
+ * request, only the source differing:
+ *
+ *     OPTIONS /4/auth/mobile    direct 000/500      via tunnel 204
+ *     OPTIONS /3/auth/refresh   direct 500          via tunnel 204
+ *
+ * A session cannot even be imported without this, because activating it means
+ * exchanging a refresh token at /3/auth/refresh. Raise the tunnel with:
+ *
+ *     ssh -N -R 1080 booking.sail
+ *
+ * (OpenSSH remote dynamic forwarding: gives the box a SOCKS5 proxy on
+ * 127.0.0.1:1080 whose traffic leaves from the machine running the ssh client.)
+ * Then BOOKING_PROXY=socks5://127.0.0.1:1080 with --restart-browser.
+ */
+const PROXY = process.env.BOOKING_PROXY ?? "";
+
+/**
+ * Chromium is normally left alone, because restarting it would destroy the
+ * login this script exists to protect. Restarting is safe ONLY because the
+ * profile is on disk -- cookies survive, provided the process is asked to stop
+ * rather than killed outright.
+ */
+const RESTART_BROWSER = process.argv.includes("--restart-browser");
+
+/**
  * Only this IP may reach the CDP tunnel.
  *
  * CDP is unauthenticated and allows arbitrary script execution, file reads via
@@ -70,6 +98,24 @@ else
   echo "Xvfb already running"
 fi
 
+${
+  RESTART_BROWSER
+    ? `# SIGTERM, not SIGKILL: chromium flushes its cookie store on a clean exit,
+# and the whole point of the on-disk profile is that the session outlives the
+# process. -9 here would drop cookies written since the last flush.
+if running "--user-data-dir=${PROFILE_DIR}"; then
+  pkill -TERM -f -- "--user-data-dir=${PROFILE_DIR}" || true
+  for i in $(seq 1 15); do
+    running "--user-data-dir=${PROFILE_DIR}" || break
+    sleep 1
+  done
+  pkill -KILL -f -- "--user-data-dir=${PROFILE_DIR}" 2>/dev/null || true
+  sleep 1
+  echo "stopped chromium (profile on disk retains the session)"
+fi`
+    : ""
+}
+
 # Matching on the profile path identifies OUR chromium specifically.
 if ! running "--user-data-dir=${PROFILE_DIR}"; then
   DISPLAY=:1 setsid nohup chromium \\
@@ -79,9 +125,9 @@ if ! running "--user-data-dir=${PROFILE_DIR}"; then
     --user-data-dir=${PROFILE_DIR} \\
     --window-size=1440,900 --window-position=0,0 \\
     --no-first-run --no-default-browser-check \\
-    "${START_URL}" > /tmp/chromium.log 2>&1 &
+    ${PROXY ? `--proxy-server=${PROXY} \\\n    ` : ""}"${START_URL}" > /tmp/chromium.log 2>&1 &
   sleep 5
-  echo "started chromium"
+  echo "started chromium${PROXY ? ` via proxy ${PROXY}` : ""}"
 else
   echo "chromium already running (profile preserved, NOT restarted)"
 fi

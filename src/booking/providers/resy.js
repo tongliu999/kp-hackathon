@@ -216,49 +216,152 @@ export async function book(page, slot) {
     );
   }
 
-  await reserve.click();
+  // The button is visible, enabled and stable, and still un-clickable: the
+  // widget iframe is taller than the 900px window, so Reserve Now sits below
+  // the fold and Playwright retries "element is outside of the viewport" until
+  // it times out. Scroll the iframe into the page's viewport first, then the
+  // button within the iframe.
+  await page
+    .locator('iframe[src*="widgets.resy.com"]')
+    .scrollIntoViewIfNeeded()
+    .catch(() => {});
+  await reserve.scrollIntoViewIfNeeded().catch(() => {});
 
-  const confirmed = frame.getByText(/reservation confirmed|you're all set|confirmed/i).first();
-  await confirmed.waitFor({ state: "visible", timeout: 45_000 });
+  try {
+    await reserve.click({ timeout: 20_000 });
+  } catch (cause) {
+    // Dispatch directly as a last resort. Safe specifically because the login
+    // guard above already ran and waitFor proved the button visible+enabled --
+    // this bypasses Playwright's viewport check, not the confirmation gate.
+    await reserve.evaluate((el) => el.click()).catch(() => {
+      throw cause;
+    });
+  }
 
-  const text = await frame.locator("body").innerText();
-  const explicit = text.match(/(?:confirmation|reservation)\s*(?:#|number|code)[:\s]*([A-Z0-9-]{4,})/i);
+  // CONFIRM AGAINST THE ACCOUNT, NOT A BANNER.
+  //
+  // The first version waited for confirmation text inside the widget. On the
+  // live site that text never matched, so book() threw -- AFTER Resy had
+  // actually taken the reservation. book.js then recorded nothing, which left a
+  // real table held at a real restaurant that `npm run reset` did not know
+  // existed. That is the worst failure this component can produce, and it is
+  // invisible: every log said the booking had failed.
+  //
+  // So success is now defined by the reservation appearing in the account,
+  // which is the same source of truth a human would check. A banner that
+  // changes wording cannot cause a silent orphan.
+  const record = await waitForReservation(page, slot);
+  if (!record) {
+    throw new Error(
+      `Resy: clicked Reserve Now for ${slot.venue} but no matching reservation ` +
+        `appeared in the account within 60s. Check ${BASE_URL}/account/reservations ` +
+        `by hand before retrying — do not assume it failed.`
+    );
+  }
 
-  // Resy does not always surface a short code. The slot token uniquely
-  // identifies venue/date/time/party, so it is a stable fallback identity for
-  // the store and for cancel() to match on -- never a fabricated code.
-  const fallback = slot.token?.replace(/^reservation-button-/, "") || null;
-  const confirmationRef = explicit ? explicit[1] : fallback;
-
-  return {
-    confirmationRef,
-    raw: { text: text.slice(0, 2000), venue: slot.venue, time: slot.time, type: slot.type, token: slot.token },
-  };
+  return { confirmationRef: record.ref, raw: { ...record, slotToken: slot.token } };
 }
 
+/**
+ * Poll the account until the reservation shows up.
+ *
+ * Runs in a sibling page so the booking page is left alone. Resy issues no
+ * short confirmation code on this screen, so the reference is composed from
+ * what the account actually displays -- venue plus the reservation line. It is
+ * derived, never invented, and it is what cancel() matches on.
+ */
+async function waitForReservation(page, slot, { timeout = 60_000 } = {}) {
+  const probe = await page.context().newPage();
+  try {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      await gotoWithRetry(probe, `${BASE_URL}/account/reservations`, { attempts: 2, timeout: 45_000 });
+      await probe.waitForTimeout(4000);
+      const text = await probe.evaluate(() => document.body.innerText);
+      const venue = String(slot.venue ?? "").trim();
+      if (venue && text.includes(venue)) {
+        const line = text
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => /\d{4}\s+\d{1,2}:\d{2}\s*(AM|PM)/i.test(l));
+        return {
+          ref: [venue, line].filter(Boolean).join(" — "),
+          venue,
+          when: line ?? null,
+          time: slot.time,
+          type: slot.type,
+        };
+      }
+      await probe.waitForTimeout(3000);
+    }
+    return null;
+  } finally {
+    await probe.close().catch(() => {});
+  }
+}
+
+/**
+ * Cancel a reservation. Selectors verified by cancelling a real one by hand.
+ *
+ * Three things the first pass got wrong, each of which left the booking
+ * standing:
+ *
+ *  - the cancel control is hidden behind the card's overflow menu, so it exists
+ *    in the DOM but is never visible until the menu is opened;
+ *  - the dialog's confirming button is labelled exactly "Cancel" -- not
+ *    "Yes, cancel" or "Confirm" -- so a name regex looking for those never
+ *    fires and the dialog just sits there;
+ *  - "Cancel" also matches the card button that OPENED the dialog, so the
+ *    confirm has to be the last match, not the first.
+ *
+ * Retried deliberately: this runs unattended between rehearsals, and a flake
+ * here leaves a real table held.
+ */
 export async function cancel(page, record) {
-  // Retried deliberately: this runs unattended between rehearsals, and a
-  // navigation flake here would leave a real booking standing.
   await gotoWithRetry(page, `${BASE_URL}/account/reservations`);
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
 
-  // Match on what the user would recognise -- venue and time -- because the
-  // stored ref may be the slot token rather than anything Resy prints.
   const venue = record?.raw?.venue ?? record?.params?.restaurant ?? "";
-  const row = venue
-    ? page.getByText(new RegExp(escapeRegExp(venue), "i")).first()
-    : page.getByText(String(record.confirmationRef)).first();
+  if (venue) {
+    await page
+      .getByText(new RegExp(escapeRegExp(venue), "i"))
+      .first()
+      .waitFor({ state: "visible", timeout: 20_000 });
+  }
 
-  await row.waitFor({ state: "visible", timeout: 20_000 });
+  const menu = page.locator('[data-test-id="account_reservation_card-menu"]').first();
+  if (await menu.count()) {
+    await menu.scrollIntoViewIfNeeded().catch(() => {});
+    await menu.click();
+    await page.waitForTimeout(2500);
+  }
 
-  const cancelButton = page.getByRole("button", { name: /cancel/i }).first();
+  const cancelButton = page
+    .locator('[data-test-id="account_reservation_card-button-cancel"]')
+    .first();
   await cancelButton.waitFor({ state: "visible", timeout: 20_000 });
   await cancelButton.click();
-
-  const confirmCancel = page.getByRole("button", { name: /yes, cancel|confirm|cancel reservation/i }).first();
-  await confirmCancel.waitFor({ state: "visible", timeout: 20_000 });
-  await confirmCancel.click();
   await page.waitForTimeout(3000);
+
+  const confirmCancel = page.getByRole("button", { name: /^cancel$/i }).last();
+  await confirmCancel.waitFor({ state: "visible", timeout: 20_000 });
+  await confirmCancel.scrollIntoViewIfNeeded().catch(() => {});
+  await confirmCancel.click();
+  await page.waitForTimeout(6000);
+
+  // Verify rather than assume. A cancel that silently failed is the same
+  // problem as a booking that silently succeeded.
+  await gotoWithRetry(page, `${BASE_URL}/account/reservations`, { attempts: 2 });
+  await page.waitForTimeout(5000);
+  const stillThere =
+    venue &&
+    (await page.evaluate((v) => document.body.innerText.includes(v), venue).catch(() => false));
+  if (stillThere) {
+    throw new Error(
+      `Resy: cancellation of "${venue}" did not take — it is still listed in the ` +
+        `account. Cancel it by hand at ${BASE_URL}/account/reservations.`
+    );
+  }
 }
 
 function escapeRegExp(str) {

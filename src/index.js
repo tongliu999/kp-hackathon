@@ -1,12 +1,35 @@
+import { makeCancelFn } from "./booking/book.js";
 import { resetAll } from "./booking/resetScript.js";
+import { acquirePage, releaseBrowser } from "./booking/session.js";
+import { isStubMode } from "./booking/stubMode.js";
+import { listOpenBookings } from "./booking/store.js";
 
-// One-command reset for TON-17: `node src/index.js`. Clears stub bookings unattended and
-// clears real ones too once a live cancelFn is wired in below — that needs a Playwright
-// page attached to the authenticated Sailbox session, which doesn't exist yet (blocked on
-// the human login in TON-8). Until then a real open booking makes this exit non-zero rather
-// than silently leaving it live, which is the safe failure mode between rehearsals.
+// One-command reset between rehearsals (TON-17): `npm run reset`.
+//
+// A real open booking needs a real cancelFn, or resetAll refuses -- correctly,
+// since marking the store cancelled while the table stays held is worse than
+// failing loudly. That session now exists (TON-8), so it is wired in here.
+//
+// The browser is attached ONLY when something real is actually open: stub-only
+// runs and the common "nothing to cancel" case must not require a live Sailbox,
+// or the reset between stub rehearsals starts depending on infrastructure it
+// does not need.
 async function main() {
-  await resetAll({});
+  const storePath = process.env.BOOKING_STORE_PATH;
+  const open = await listOpenBookings(storePath);
+  const needsProvider = !isStubMode() && open.some((record) => !record.stub);
+
+  if (!needsProvider) {
+    await resetAll({ storePath });
+    return;
+  }
+
+  const page = await acquirePage();
+  try {
+    await resetAll({ storePath, cancelFn: makeCancelFn(page) });
+  } finally {
+    await releaseBrowser();
+  }
 }
 
 main().catch((err) => {
