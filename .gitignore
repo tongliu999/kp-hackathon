@@ -11,3 +11,4 @@ runbooks.json
 .claude/
 node_modules/
 .DS_Store
+.sailbox-demo.json

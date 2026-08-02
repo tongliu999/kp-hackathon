@@ -85,7 +85,9 @@ async def test_offline_path_collects_slots_and_returns_fake_confirmation(tmp_pat
     assert outcome.status is WarmPathStatus.SUCCEEDED
     assert [action for action, _ in runner.calls] == ["restaurant.search", "restaurant.book"]
     assert outcome.execution.steps[-1].output["confirmation_id"] == "FAKE-ONLY-123"
-    assert voice.messages[0] == "Please provide the party size."
+    # The runbook declares a spoken `prompt`, which is used verbatim in place of
+    # the generated "Please provide the party size." fallback.
+    assert voice.messages[0] == "How many people?"
     assert "configured-provider" in confirm_voice.messages[0]
 
 

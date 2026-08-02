@@ -1,0 +1,83 @@
+{
+  "branch_id": "b0",
+  "angle": "Use the site's own cuisine filter and take the highest-rated result that has the requested time available",
+  "task": "book a table for two on friday at seven, somewhere italian",
+  "steps": [
+    {
+      "i": 0,
+      "t": 0.0,
+      "kind": "think",
+      "action": "plan",
+      "observation_excerpt": "Filter by cuisine first, then constrain to the exact time. Avoids paging through irrelevant results.",
+      "outcome": "ok"
+    },
+    {
+      "i": 1,
+      "t": 1.8,
+      "kind": "browser",
+      "action": "goto",
+      "args": { "url": "https://www.opentable.com" },
+      "url": "https://www.opentable.com",
+      "observation_excerpt": "Loaded. Signed in as tong (user menu present).",
+      "outcome": "ok"
+    },
+    {
+      "i": 2,
+      "t": 4.1,
+      "kind": "browser",
+      "action": "fill",
+      "args": { "selector": "[data-test='party-size-picker']", "value": "2" },
+      "observation_excerpt": "Party size set to 2.",
+      "outcome": "ok"
+    },
+    {
+      "i": 3,
+      "t": 5.6,
+      "kind": "browser",
+      "action": "fill",
+      "args": { "selector": "[data-test='date-picker']", "value": "Friday 7:00 PM" },
+      "observation_excerpt": "Date set to Fri Aug 7, time 7:00 PM.",
+      "outcome": "ok"
+    },
+    {
+      "i": 4,
+      "t": 7.2,
+      "kind": "browser",
+      "action": "fill",
+      "args": { "selector": "[data-test='search-input']", "value": "Italian" },
+      "observation_excerpt": "Cuisine filter applied.",
+      "outcome": "ok"
+    },
+    {
+      "i": 5,
+      "t": 9.9,
+      "kind": "browser",
+      "action": "submit",
+      "args": { "selector": "[data-test='search-form']" },
+      "url": "https://www.opentable.com/s?covers=2&cuisine=italian",
+      "observation_excerpt": "14 results. Top: Trattoria Nove, 4.8 stars (1,204 reviews), 0.4mi, slots 6:45 / 7:00 / 7:15 PM.",
+      "outcome": "ok"
+    },
+    {
+      "i": 6,
+      "t": 12.4,
+      "kind": "browser",
+      "action": "read",
+      "args": { "selector": "[data-test='result-card']:first-child" },
+      "observation_excerpt": "Trattoria Nove - 4.8 stars - Italian - $$ - 7:00 PM available, exact match to requested time.",
+      "outcome": "ok"
+    },
+    {
+      "i": 7,
+      "t": 15.1,
+      "kind": "browser",
+      "action": "click",
+      "args": { "selector": "[data-test='slot-time'][data-time='19:00']" },
+      "observation_excerpt": "Reservation page open. Table for 2, Fri Aug 7 7:00 PM. Free cancellation up to 2 hours before.",
+      "outcome": "ok"
+    }
+  ],
+  "final_answer": "Trattoria Nove, table for 2, Friday Aug 7 at 7:00 PM. 4.8 stars, 0.4 miles away, free cancellation up to 2 hours before. Ready to confirm.",
+  "success_signal": true,
+  "wall_ms": 15100
+}

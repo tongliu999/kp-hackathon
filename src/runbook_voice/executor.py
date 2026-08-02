@@ -114,7 +114,7 @@ class RunbookExecutor:
                 return ExecutionResult(runbook.id, ExecutionStatus.FAILED, tuple(results))
 
             if step.irreversible:
-                approved = await self._confirm(runbook, step, arguments)
+                approved = await self._confirm(runbook, step, arguments, slots)
                 if not approved:
                     results.append(
                         StepResult(
@@ -150,12 +150,24 @@ class RunbookExecutor:
         return ExecutionResult(runbook.id, ExecutionStatus.SUCCEEDED, tuple(results))
 
     async def _confirm(
-        self, runbook: Runbook, step: RunbookStep, arguments: Mapping[str, Any]
+        self,
+        runbook: Runbook,
+        step: RunbookStep,
+        arguments: Mapping[str, Any],
+        slots: Mapping[str, Any],
     ) -> bool:
         # Missing confirmation plumbing is a denial, never an approval.
         if self._confirmation_gate is None:
             return False
         prompt = step.confirmation_prompt or f"Confirm irreversible action: {step.action}"
+        try:
+            # Invariant 1 wants the readback to name specifics, so the prompt is
+            # templated like any other field. A prompt with no {{slot}} is unchanged.
+            prompt = substitute_slots(prompt, slots)
+        except SlotResolutionError:
+            # An unresolvable readback would be spoken as literal "{{cuisine}}".
+            # Refusing is the only safe outcome for an irreversible step.
+            return False
         request = ConfirmationRequest(
             runbook_id=runbook.id,
             runbook_name=runbook.name,

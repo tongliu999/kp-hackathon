@@ -3,26 +3,33 @@
   "name": "Book a restaurant table",
   "version": "1",
   "description": "Reserve or book a restaurant table for dinner",
+  "utterance_examples": [
+    "book me a table for two friday at seven",
+    "get us a dinner reservation saturday night",
+    "reserve somewhere italian for four people tomorrow at eight"
+  ],
   "slots": [
-    {"name": "party_size", "type": "integer", "required": true, "description": "the party size"},
-    {"name": "cuisine", "type": "string", "required": true, "description": "the cuisine"},
-    {"name": "city", "type": "string", "required": true, "description": "the city"},
-    {"name": "date", "type": "string", "required": true, "description": "the date"},
-    {"name": "time", "type": "string", "required": true, "description": "the time"}
+    {"name": "party_size", "type": "integer", "required": true, "description": "the party size", "prompt": "How many people?"},
+    {"name": "cuisine", "type": "string", "required": true, "description": "the cuisine", "prompt": "What kind of food?"},
+    {"name": "city", "type": "string", "required": true, "description": "the city", "prompt": "Which city?"},
+    {"name": "date", "type": "string", "required": true, "description": "the date", "prompt": "What day?"},
+    {"name": "time", "type": "string", "required": true, "description": "the time", "prompt": "What time?"}
   ],
   "steps": [
     {
       "id": "search",
       "action": "restaurant.search",
+      "description": "Find available tables matching the request",
       "arguments": {"party_size": "{{party_size}}", "cuisine": "{{cuisine}}", "city": "{{city}}", "date": "{{date}}", "time": "{{time}}"},
       "irreversible": false
     },
     {
       "id": "book",
       "action": "restaurant.book",
+      "description": "Place the reservation",
       "arguments": {"provider": "configured-provider", "party_size": "{{party_size}}", "cuisine": "{{cuisine}}", "city": "{{city}}", "date": "{{date}}", "time": "{{time}}"},
       "irreversible": true,
-      "confirmation_prompt": "Confirm this restaurant booking"
+      "confirmation_prompt": "Table for {{party_size}}, {{cuisine}}, in {{city}} on {{date}} at {{time}}. Should I confirm?"
     }
   ]
 }
