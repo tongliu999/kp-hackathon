@@ -113,8 +113,7 @@ test("bookStep fails loud on empty search results instead of guessing", async ()
           page: {},
           getYes: async () => "yes",
           storePath,
-          env: {},
-        }),
+            }),
       UnexpectedPageStateError
     );
     assert.deepEqual(await listOpenBookings(storePath), []);
@@ -140,8 +139,7 @@ test("bookStep fails loud when no result matches the requested slot", async () =
           page: {},
           getYes: async () => "yes",
           storePath,
-          env: {},
-        }),
+            }),
       UnexpectedPageStateError
     );
   });
@@ -164,8 +162,7 @@ test("bookStep treats a missing confirmationRef as not booked", async () => {
           page: {},
           getYes: async () => "yes",
           storePath,
-          env: {},
-        }),
+            }),
       UnexpectedPageStateError
     );
     assert.deepEqual(await listOpenBookings(storePath), []);
@@ -177,7 +174,9 @@ test("a successful real booking records to the store and cancels via makeCancelF
   registerProvider("fake-real", {
     search: async () => [{ label: "7:00 PM" }],
     selectSlot: (results) => results[0],
-    book: async () => ({ confirmationRef: "REAL-CONF-1", raw: { ok: true } }),
+    book: async () => {
+      return { confirmationRef: "REAL-CONF-1", raw: { ok: true } };
+    },
     cancel: async (page, record) => cancelCalls.push(record.confirmationRef),
   });
 
@@ -189,7 +188,6 @@ test("a successful real booking records to the store and cancels via makeCancelF
       page: fakePage,
       getYes: async () => "yes",
       storePath,
-      env: {},
     });
     assert.equal(booking.confirmationRef, "REAL-CONF-1");
     assert.equal(booking.stub, false);

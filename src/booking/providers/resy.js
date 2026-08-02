@@ -20,6 +20,8 @@
 // charged if you need to cancel, we ask that you do so at least 24 hours in
 // advance." That is the free-instant-cancellation property TON-8 selected on.
 
+import { isPaymentField, PaymentFieldEncounteredError } from "../paymentGuard.js";
+
 const BASE_URL = "https://resy.com";
 
 // Resy's city slugs. The runbook says "San Francisco"; the URL needs
@@ -215,6 +217,16 @@ export async function book(page, slot) {
         "Resy session. Log in at the VNC session before booking."
     );
   }
+
+  // Entering financial credentials is a hard line, not a judgment call. This
+  // account books against a card already on file, so a payment-shaped field
+  // appearing here means the flow is not the one that was verified -- stop
+  // rather than improvise next to a checkout form.
+  const labels = await frame.locator("input, label").evaluateAll((els) =>
+    els.map((el) => el.getAttribute("name") ?? el.getAttribute("placeholder") ?? el.textContent ?? "")
+  );
+  const payment = labels.find((label) => isPaymentField(label));
+  if (payment) throw new PaymentFieldEncounteredError(payment.trim().slice(0, 60));
 
   // The button is visible, enabled and stable, and still un-clickable: the
   // widget iframe is taller than the 900px window, so Reserve Now sits below

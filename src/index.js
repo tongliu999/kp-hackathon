@@ -1,38 +1,46 @@
-import { makeCancelFn } from "./booking/book.js";
-import { resetAll } from "./booking/resetScript.js";
-import { acquirePage, releaseBrowser } from "./booking/session.js";
-import { isStubMode } from "./booking/stubMode.js";
-import { listOpenBookings } from "./booking/store.js";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // One-command reset between rehearsals (TON-17): `npm run reset`.
 //
-// A real open booking needs a real cancelFn, or resetAll refuses -- correctly,
-// since marking the store cancelled while the table stays held is worse than
-// failing loudly. That session now exists (TON-8), so it is wired in here.
-//
-// The browser is attached ONLY when something real is actually open: stub-only
-// runs and the common "nothing to cancel" case must not require a live Sailbox,
-// or the reset between stub rehearsals starts depending on infrastructure it
-// does not need.
-async function main() {
-  const storePath = process.env.BOOKING_STORE_PATH;
-  const open = await listOpenBookings(storePath);
-  const needsProvider = !isStubMode() && open.some((record) => !record.stub);
+// Delegates to the bridge rather than calling resetAll() directly, so it takes
+// the same route every other caller does. That matters in real mode: the
+// booking store and the browser both live inside the Sailbox, and a local
+// resetAll() would read an empty local store and cheerfully report "nothing to
+// cancel" while a real table stayed held.
+const BRIDGE = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "scripts",
+  "booking_bridge.mjs"
+);
 
-  if (!needsProvider) {
-    await resetAll({ storePath });
+const child = spawn(process.execPath, [BRIDGE], {
+  stdio: ["pipe", "pipe", "inherit"],
+  env: process.env,
+});
+child.stdin.end(JSON.stringify({ action: "booking.reset", arguments: {} }));
+
+let out = "";
+child.stdout.on("data", (chunk) => (out += chunk));
+child.on("close", () => {
+  const line = out.trim().split("\n").filter(Boolean).pop();
+  if (!line) {
+    console.error("[reset] bridge produced no output");
+    process.exitCode = 1;
     return;
   }
-
-  const page = await acquirePage();
-  try {
-    await resetAll({ storePath, cancelFn: makeCancelFn(page) });
-  } finally {
-    await releaseBrowser();
+  const payload = JSON.parse(line);
+  if (!payload.ok) {
+    console.error(payload.error);
+    process.exitCode = 1;
+    return;
   }
-}
-
-main().catch((err) => {
-  console.error(err.message);
-  process.exitCode = 1;
+  const cancelled = payload.result.cancelled ?? [];
+  console.log(
+    cancelled.length
+      ? `[reset] cancelled ${cancelled.length} booking(s): ${cancelled.join(", ")}`
+      : "[reset] nothing to cancel."
+  );
 });
