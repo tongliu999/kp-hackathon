@@ -8,7 +8,9 @@ import pytest
 from runbook_voice.completed_agents import (
     list_completed_agents,
     match_completed_agent,
+    missing_required_slots,
     replay_completed_agent,
+    suggested_slot_values,
 )
 from runbook_voice.executor import ExecutionStatus
 from runbook_voice.runbook_store import JSONRunbookStore
@@ -57,6 +59,52 @@ def test_same_intent_matches_completed_agent_but_unrelated_prompt_misses(tmp_pat
 
     assert match_completed_agent("Arrange dinner reservations for two", agents) is agents[0]
     assert match_completed_agent("Summarize this quarterly report", agents) is None
+
+
+def test_match_recovers_spoken_slot_values_without_inventing_missing_values(tmp_path: Path) -> None:
+    artifact = tmp_path / "demo" / "handwritten_runbook.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text(
+        json.dumps(
+            {
+                **RUNBOOK,
+                "slots": [
+                    {**RUNBOOK["slots"][0], "example": "2"},
+                    {**RUNBOOK["slots"][1], "example": "San Francisco"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    agent = list_completed_agents(root=tmp_path)[0]
+
+    values = suggested_slot_values(agent, "Book dinner in San Francisco tomorrow for two")
+
+    assert values == {"party_size": 2, "city": "San Francisco"}
+    assert missing_required_slots(agent, values) == []
+
+
+def test_match_keeps_required_slot_missing_when_prompt_does_not_contain_it(tmp_path: Path) -> None:
+    artifact = tmp_path / "demo" / "handwritten_runbook.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text(
+        json.dumps(
+            {
+                **RUNBOOK,
+                "slots": [
+                    {**RUNBOOK["slots"][0], "example": "2"},
+                    {**RUNBOOK["slots"][1], "example": "San Francisco"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    agent = list_completed_agents(root=tmp_path)[0]
+
+    values = suggested_slot_values(agent, "Book dinner for two")
+
+    assert values == {"party_size": 2}
+    assert missing_required_slots(agent, values) == ["city"]
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-import { createReadStream, mkdirSync } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -21,6 +21,8 @@ const MIN_TREE_DEPTH = 1;
 const MAX_TREE_DEPTH = 4;
 const AGENT_MARKER = "AGENTS_JSON ";
 const AGENT_MATCH_MARKER = "AGENT_MATCH ";
+const MAX_AUDIO_BYTES = 12_000_000;
+let voiceApiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
 const DEFAULT_REQUEST =
   "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.";
 const types = new Map([
@@ -54,6 +56,57 @@ async function readJson(request) {
     if (body.length > 32_000) throw new Error("request body is too large");
   }
   return body ? JSON.parse(body) : {};
+}
+
+async function readBytes(request, limit = MAX_AUDIO_BYTES) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error("audio recording is too large");
+    chunks.push(chunk);
+  }
+  if (!size) throw new Error("audio recording is empty");
+  return Buffer.concat(chunks);
+}
+
+async function transcribeAudio(request) {
+  const apiKey = voiceApiKey;
+  if (!apiKey) {
+    const error = new Error("OPENAI_API_KEY is not configured on the Branch server");
+    error.statusCode = 503;
+    throw error;
+  }
+  const contentType = String(request.headers["content-type"] ?? "").split(";")[0].trim();
+  if (!contentType.startsWith("audio/")) throw new Error("recording must use an audio content type");
+  const extension = new Map([
+    ["audio/webm", "webm"], ["audio/ogg", "ogg"], ["audio/mp4", "m4a"],
+    ["audio/wav", "wav"], ["audio/x-wav", "wav"], ["audio/mpeg", "mp3"],
+  ]).get(contentType) ?? "webm";
+  const bytes = await readBytes(request);
+  const form = new FormData();
+  form.set("model", process.env.OPENAI_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe");
+  form.set("file", new Blob([bytes], { type: contentType }), `branch-recording.${extension}`);
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    const error = new Error(`transcription failed with HTTP ${response.status}: ${text.slice(0, 300)}`);
+    error.statusCode = 502;
+    throw error;
+  }
+  let payload;
+  try { payload = JSON.parse(text); } catch { throw new Error("transcription returned invalid JSON"); }
+  const transcript = String(payload?.text ?? "").trim();
+  if (!transcript) throw new Error("transcription returned no speech");
+  return transcript;
+}
+
+function requestSource(value) {
+  return value === "voice" ? "voice" : "typed";
 }
 
 function completedAgents(args, marker) {
@@ -151,6 +204,14 @@ async function readTrajectoryDirectory(directory, source) {
     // Flat and interrupted runs do not have a tree manifest.
   }
   try {
+    const payload = JSON.parse(await readFile(path.join(directory, "request.json"), "utf8"));
+    if (payload?.input_source === "voice" || payload?.input_source === "typed") {
+      source = payload.input_source;
+    }
+  } catch {
+    // Older runs predate typed/voice provenance.
+  }
+  try {
     const judgeLog = await readFile(path.join(directory, "judge.log"), "utf8");
     winner ??= judgeLog.match(/tally:\s*(b\d+)\s+x\d+/)?.[1] ?? null;
   } catch {
@@ -194,36 +255,76 @@ async function findTrajectoryRuns(directory, source, depth = 0) {
   return found;
 }
 
+async function listReplayRuns() {
+  const directory = path.join(root, "runs", "replays");
+  let entries = [];
+  try { entries = await readdir(directory, { withFileTypes: true }); } catch { return []; }
+  const records = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^[0-9a-f-]+\.json$/.test(entry.name)) continue;
+    try {
+      const record = JSON.parse(await readFile(path.join(directory, entry.name), "utf8"));
+      if (record?.runKind === "replay" && record.request && record.agentId) records.push(record);
+    } catch {
+      // A partially written replay must not make the history API unusable.
+    }
+  }
+  return records;
+}
+
+function runtimeHistory(run) {
+  if (run.task === "replay") {
+    return {
+      id: `workflow:${run.id}`,
+      workflowId: run.id,
+      task: run.request,
+      source: run.inputSource,
+      path: `completed agent / ${run.agentId}`,
+      createdAt: run.startedAt,
+      winner: null,
+      branches: [],
+      runKind: "replay",
+      agentId: run.agentId,
+      workflowStatus: run.status,
+      workflowPhase: run.parentPhase,
+      replayResult: run.replayResult,
+      output: run.output,
+    };
+  }
+  return {
+    id: `workflow:${run.id}`,
+    workflowId: run.id,
+    task: run.request,
+    source: run.inputSource,
+    path: "live checkpoint tree",
+    createdAt: run.startedAt,
+    winner: null,
+    branches: [],
+    workflowStatus: run.status,
+    workflowPhase: run.parentPhase,
+    expectedBranches: run.plannedBranches,
+    plannedApproaches: run.plan?.approaches ?? [],
+    branchLimit: run.branchLimit,
+    maxDepth: run.maxDepth,
+    treeRounds: run.treeRounds,
+    metrics: run.metrics,
+  };
+}
+
 async function listHistory() {
   historyRegistry.clear();
   const savedRecords = [
     ...(await findTrajectoryRuns(path.join(root, "runs"), "live")),
     ...(await findTrajectoryRuns(path.join(root, "demo", "cold-capture"), "recorded")),
+    ...(await listReplayRuns()),
   ];
   const activeRecords = [...runs.values()]
     .filter(
       (run) =>
-        run.task === "fanout" &&
+        (run.task === "fanout" || run.task === "replay") &&
         (run.status === "running" || run.status === "stopping")
     )
-    .map((run) => ({
-      id: `workflow:${run.id}`,
-      workflowId: run.id,
-      task: run.request,
-      source: "live",
-      path: "live checkpoint tree",
-      createdAt: run.startedAt,
-      winner: null,
-      branches: [],
-      workflowStatus: run.status,
-      workflowPhase: run.parentPhase,
-      expectedBranches: run.plannedBranches,
-      plannedApproaches: run.plan?.approaches ?? [],
-      branchLimit: run.branchLimit,
-      maxDepth: run.maxDepth,
-      treeRounds: run.treeRounds,
-      metrics: run.metrics,
-    }));
+    .map(runtimeHistory);
   return [...activeRecords, ...savedRecords]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map(({ directory: _directory, ...record }) => record);
@@ -238,6 +339,7 @@ function selectedHistory(input) {
 function taskCommand(task, input) {
   if (task === "fanout") {
     const request = String(input?.request ?? DEFAULT_REQUEST).trim();
+    const inputSource = requestSource(input?.inputSource);
     if (!request || request.length > 1_000) throw new Error("request must be 1–1,000 characters");
     const branchLimit = Number(input?.maxBranches ?? DEFAULT_BRANCH_LIMIT);
     if (!Number.isInteger(branchLimit) || branchLimit < MIN_BRANCHES || branchLimit > MAX_BRANCH_LIMIT) {
@@ -250,6 +352,7 @@ function taskCommand(task, input) {
     return {
       label: "Adaptive Sail tree + learn",
       request,
+      inputSource,
       branchLimit,
       maxDepth,
       command: "python",
@@ -263,6 +366,8 @@ function taskCommand(task, input) {
         String(branchLimit),
         "--max-depth",
         String(maxDepth),
+        "--input-source",
+        inputSource,
         "--runbook-store",
         "demo/runbook-store.json",
       ],
@@ -279,9 +384,13 @@ function taskCommand(task, input) {
     }
     const slotsJson = JSON.stringify(slots);
     if (slotsJson.length > 12_000) throw new Error("agent slot values are too large");
+    const request = String(input?.request ?? "Use completed agent").trim().slice(0, 1_000);
+    const inputSource = requestSource(input?.inputSource);
     return {
       label: `Reuse completed agent · ${agentId}`,
       agentId,
+      request,
+      inputSource,
       command: "python",
       args: [
         "-m",
@@ -344,12 +453,14 @@ function publicRun(run) {
     branchLimit: run.branchLimit,
     maxDepth: run.maxDepth,
     agentId: run.agentId,
+    inputSource: run.inputSource,
     plannedBranches: run.plannedBranches,
     plan: run.plan,
     parentPhase: run.parentPhase,
     learning: run.learning,
     metrics: run.metrics,
     treeRounds: run.treeRounds,
+    replayResult: run.replayResult,
   };
 }
 
@@ -399,6 +510,40 @@ function appendOutput(run, chunk) {
       // The next output chunk retries parsing.
     }
   }
+  const replayMatch = run.output.match(/AGENT_REPLAY\s+(\{[^\n]+\})/);
+  if (replayMatch) {
+    try {
+      run.replayResult = JSON.parse(replayMatch[1]);
+      run.parentPhase = "saved runbook complete";
+    } catch {
+      // The next output chunk retries parsing.
+    }
+  }
+}
+
+function persistReplay(run) {
+  try {
+    const directory = path.join(root, "runs", "replays");
+    mkdirSync(directory, { recursive: true });
+    const record = {
+      id: `replay:${run.id}`,
+      task: run.request,
+      source: run.inputSource,
+      path: `completed agent / ${run.agentId}`,
+      createdAt: run.startedAt,
+      winner: null,
+      branches: [],
+      runKind: "replay",
+      agentId: run.agentId,
+      workflowStatus: run.status,
+      workflowPhase: run.parentPhase,
+      replayResult: run.replayResult,
+      output: run.output,
+    };
+    writeFileSync(path.join(directory, `${run.id}.json`), `${JSON.stringify(record, null, 2)}\n`);
+  } catch (error) {
+    appendOutput(run, `[console] Could not save replay history: ${error.message}\n`);
+  }
 }
 
 function startRun(task, input) {
@@ -419,12 +564,14 @@ function startRun(task, input) {
     branchLimit: spec.branchLimit ?? null,
     maxDepth: spec.maxDepth ?? null,
     agentId: spec.agentId ?? null,
+    inputSource: spec.inputSource ?? requestSource(input?.inputSource),
     plannedBranches: null,
     plan: null,
-    parentPhase: task === "fanout" ? "planning approaches" : null,
+    parentPhase: task === "fanout" ? "planning approaches" : task === "replay" ? "running saved runbook" : null,
     learning: null,
     metrics: null,
     treeRounds: [],
+    replayResult: null,
     label: spec.label,
     status: "running",
     output: `[console] Starting ${spec.label}…\n`,
@@ -456,11 +603,41 @@ function startRun(task, input) {
       run,
       `\n[console] ${run.status.toUpperCase()}${signal ? ` (${signal})` : ""}${code === null ? "" : ` — exit ${code}`}\n`
     );
+    if (run.task === "replay") persistReplay(run);
   });
   return run;
 }
 
 async function handleApi(request, response, pathname) {
+  if (request.method === "GET" && pathname === "/api/voice/status") {
+    json(response, 200, {
+      configured: Boolean(voiceApiKey),
+      model: process.env.OPENAI_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe",
+    });
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/voice/config") {
+    try {
+      const input = await readJson(request);
+      const apiKey = String(input?.apiKey ?? "").trim();
+      if (!apiKey.startsWith("sk-") || apiKey.length < 20 || apiKey.length > 512) {
+        throw new Error("enter a valid OpenAI API key");
+      }
+      voiceApiKey = apiKey;
+      json(response, 200, { configured: true });
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/voice/transcribe") {
+    try {
+      json(response, 200, { transcript: await transcribeAudio(request) });
+    } catch (error) {
+      json(response, error.statusCode ?? 400, { error: error.message });
+    }
+    return true;
+  }
   if (request.method === "GET" && pathname === "/api/agents") {
     try {
       json(response, 200, await completedAgents(["list"], AGENT_MARKER));
@@ -583,6 +760,7 @@ async function handleApi(request, response, pathname) {
       const input = await readJson(request);
       if (input.task === "fanout") {
         const utterance = String(input?.request ?? DEFAULT_REQUEST).trim();
+        const inputSource = requestSource(input?.inputSource);
         if (!utterance || utterance.length > 1_000) {
           throw new Error("request must be 1–1,000 characters");
         }
@@ -591,6 +769,10 @@ async function handleApi(request, response, pathname) {
           json(response, 200, {
             kind: "agent_match",
             agent: match.agent,
+            slots: match.slots ?? {},
+            missingSlots: match.missing_slots ?? [],
+            request: utterance,
+            inputSource,
             message: `Reusing ${match.agent.name}; no branch search was launched.`,
           });
           return true;

@@ -264,6 +264,15 @@ judge and distill controls remain available for inspection or reruns, alongside
 output and authentication management. Development checks remain available from the
 command line, but are intentionally not exposed as console actions.
 
+The prompt composer also accepts microphone input. Click **Speak**; if the local
+server has no `OPENAI_API_KEY`, the UI asks for one once and keeps it only in that
+server process (it is not written to the repository). Say the complete request and
+click **Stop**; recordings also stop automatically after 15 seconds. The browser
+sends the recording only to the local Branch server. The server transcribes it with
+`OPENAI_TRANSCRIBE_MODEL` (default `gpt-4o-mini-transcribe`) and puts the transcript
+in the same router used by typed prompts. The Runs rail labels the input as `voice`
+or `typed`, and the server never returns the API key to browser JavaScript.
+
 Choose **Agents** to browse every validated completed runbook discovered in the
 learned store and distilled artifacts. Each card shows its inputs, ordered actions,
 source, full JSON, and learned do/avoid guidance. The input form replays that saved
@@ -271,8 +280,11 @@ runbook through the existing safety-gated executor in local stub mode, so it cre
 no new branches and contacts no booking provider. Irreversible steps still require
 an explicit confirmation. Submitting a new prompt is warm-path-first: the server
 uses the same deterministic semantic matcher as voice replay and, when a completed
-agent matches, opens that agent instead of launching a Sail search. Only a genuine
-miss reaches the adaptive cold path.
+agent matches, recovers the runbook inputs present in the request and opens that
+agent instead of launching a Sail search. A fully specified request runs the saved
+agent immediately after explicit irreversible-step confirmation; missing inputs stay
+visible in the form. Replays are recorded in the Runs rail too. Only a genuine miss
+reaches the adaptive cold path.
 
 The console exposes only that fixed action allowlist—there is no arbitrary shell
 input. Only one workflow runs at a time, live output stays visible, and Stop

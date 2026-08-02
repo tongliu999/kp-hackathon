@@ -71,6 +71,7 @@
           <div class="composer-label"><span id="composer-title">NEW PROMPT</span><small>Branches are read-only until confirmation</small></div>
           <div class="composer-row">
             <textarea id="fanout-request" rows="2" aria-label="Prompt to fan out">Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.</textarea>
+            <button id="microphone-button" class="microphone-button" type="button" aria-label="Start microphone recording"><span class="mic-icon" aria-hidden="true">●</span><strong>Speak</strong><small id="voice-state">CHECKING MIC</small></button>
             <label class="branch-limit" for="max-branches"><span>MAX BRANCHES</span><input id="max-branches" type="number" min="2" max="8" value="5" inputmode="numeric"></label>
             <label class="branch-limit" for="max-depth"><span>MAX DEPTH</span><input id="max-depth" type="number" min="1" max="4" value="3" inputmode="numeric"></label>
             <button class="run-button" type="button" data-task="fanout"><span>Run adaptive</span><small>PLAN → LEARN</small></button>

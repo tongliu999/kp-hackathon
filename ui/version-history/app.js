@@ -9,6 +9,8 @@ const outputDrawer = document.querySelector("#output-drawer");
 const agentOutput = document.querySelector("#agent-output");
 const agentRunLabel = document.querySelector("#agent-run-label");
 const agentStopButton = document.querySelector("#agent-stop-run");
+const microphoneButton = document.querySelector("#microphone-button");
+const voiceState = document.querySelector("#voice-state");
 
 let histories = [];
 let completedAgents = [];
@@ -19,6 +21,14 @@ let activeRunId = null;
 let activeRunTask = null;
 let pollTimer = null;
 let lastFanoutPrompt = null;
+let selectedAgentPrefill = {};
+let selectedAgentRequest = "";
+let mediaRecorder = null;
+let microphoneStream = null;
+let audioChunks = [];
+let microphoneTimer = null;
+let voiceConfigured = false;
+let voiceSupported = false;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -71,11 +81,29 @@ function runStatus(run) {
 }
 
 function workflowHistory(run) {
+  if (run.task === "replay") {
+    return {
+      id: `workflow:${run.id}`,
+      workflowId: run.id,
+      task: run.request,
+      source: run.inputSource ?? "typed",
+      path: `completed agent / ${run.agentId}`,
+      createdAt: run.startedAt,
+      winner: null,
+      branches: [],
+      runKind: "replay",
+      agentId: run.agentId,
+      workflowStatus: run.status,
+      workflowPhase: run.parentPhase,
+      replayResult: run.replayResult,
+      output: run.output,
+    };
+  }
   return {
     id: `workflow:${run.id}`,
     workflowId: run.id,
     task: run.request,
-    source: "live",
+    source: run.inputSource ?? "typed",
     path: "live checkpoint tree",
     createdAt: run.startedAt,
     winner: null,
@@ -98,7 +126,7 @@ function liveRunMeta(run) {
 }
 
 function upsertWorkflowHistory(run, { select = false } = {}) {
-  if (run.task !== "fanout" || !run.request) return;
+  if ((run.task !== "fanout" && run.task !== "replay") || !run.request) return;
   const liveRun = workflowHistory(run);
   const index = histories.findIndex((history) => history.id === liveRun.id);
   if (index === -1) histories.unshift(liveRun);
@@ -118,6 +146,7 @@ function setConsoleState(status, label) {
   document.querySelectorAll("[data-busy-control]").forEach((button) => {
     button.disabled = busy;
   });
+  microphoneButton.disabled = busy || !voiceSupported;
   stopButton.disabled = !busy;
   agentStopButton.disabled = !busy;
 }
@@ -172,9 +201,11 @@ function renderRunList() {
     top.append(element("span", `run-status ${runStatus(run)}`, runStatus(run)));
     button.append(top, element("strong", "", compact(run.task, 68)));
     const meta = element("span", "run-list-meta");
-    const branchMeta = run.workflowStatus
-      ? liveRunMeta(run)
-    : `${run.branches.length} tree nodes`;
+    const branchMeta = run.runKind === "replay"
+      ? `reused ${run.agentId}`
+      : run.workflowStatus
+        ? liveRunMeta(run)
+        : `${run.branches.length} tree nodes`;
     meta.append(element("span", "", branchMeta));
     meta.append(element("span", "", new Date(run.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })));
     button.append(meta);
@@ -190,7 +221,7 @@ function selectRun(run) {
   const meta = document.querySelector("#selected-meta");
   meta.replaceChildren(
     element("span", `source-chip ${run.source}`, run.source),
-    element("span", "", run.workflowStatus ? liveRunMeta(run) : `${run.branches.length} persisted tree nodes`),
+    element("span", "", run.runKind === "replay" ? `completed agent ${run.agentId}` : run.workflowStatus ? liveRunMeta(run) : `${run.branches.length} persisted tree nodes`),
     element("span", "", run.workflowStatus ?? (run.winner ? `winner ${run.winner}` : "not judged")),
     element("span", "", run.path)
   );
@@ -207,7 +238,9 @@ function renderBranchCanvas() {
   promptNode.type = "button";
   promptNode.append(element("span", "node-kicker", "PROMPT"));
   promptNode.append(element("strong", "", compact(selectedRun.task, 118)));
-  const approachCount = selectedRun.workflowStatus
+  const approachCount = selectedRun.runKind === "replay"
+    ? `warm replay · ${selectedRun.source} input`
+    : selectedRun.workflowStatus
     ? (selectedRun.expectedBranches ? `${selectedRun.expectedBranches} parent-planned approaches` : `parent choosing up to ${selectedRun.branchLimit ?? 5} approaches`)
     : `${selectedRun.branches.length} nodes across ${treeDepth(selectedRun)} levels`;
   promptNode.append(element("small", "", approachCount));
@@ -217,6 +250,24 @@ function renderBranchCanvas() {
     renderRunSummary();
   });
   graph.append(promptNode);
+
+  if (selectedRun.runKind === "replay") {
+    const branches = element("div", "branch-forest");
+    const agentNode = element("button", `branch-node ${selectedRun.workflowStatus === "succeeded" ? "winner" : "live-branch"}`);
+    agentNode.type = "button";
+    const heading = element("span", "branch-heading");
+    heading.append(element("span", "branch-id", selectedRun.agentId), element("span", `branch-state ${selectedRun.workflowStatus}`, selectedRun.workflowStatus));
+    const stepCount = selectedRun.replayResult?.steps?.length ?? 0;
+    agentNode.append(heading, element("span", "branch-angle", "Completed agent warm replay — no Sailboxes or branch search."));
+    const metrics = element("span", "branch-metrics");
+    metrics.append(element("span", "", `${stepCount} steps`), element("span", "", selectedRun.source));
+    agentNode.append(metrics);
+    agentNode.addEventListener("click", renderRunSummary);
+    branches.append(agentNode);
+    graph.append(branches);
+    branchCanvas.append(graph);
+    return;
+  }
 
   const branches = element("div", "branch-forest");
   if (selectedRun.workflowStatus && !selectedRun.branches.length) {
@@ -362,6 +413,22 @@ function renderRunSummary() {
   const header = inspectorHeader("Prompt overview", "RUN SUMMARY", runStatus(selectedRun));
   header.append(element("p", "trace-summary", selectedRun.task));
   inspector.append(header);
+  if (selectedRun.runKind === "replay") {
+    const warm = element("section", "learned-run-summary");
+    warm.append(element("strong", "", `Reused ${selectedRun.agentId}`));
+    warm.append(element("p", "", `This ${selectedRun.source} prompt matched a completed agent. Branch launched zero Sailboxes and ran the saved runbook directly in safe stub mode.`));
+    inspector.append(warm);
+    const steps = element("section", "inspector-section");
+    steps.append(element("h3", "", "Saved runbook execution"));
+    for (const step of selectedRun.replayResult?.steps ?? []) {
+      steps.append(detailRow(step.action, `${step.status}${step.error ? ` · ${step.error}` : ""}\n${JSON.stringify(step.output ?? step.arguments ?? {}, null, 2)}`, true));
+    }
+    if (!(selectedRun.replayResult?.steps?.length)) {
+      steps.append(detailRow("Status", selectedRun.workflowPhase ?? selectedRun.workflowStatus));
+    }
+    inspector.append(steps);
+    return;
+  }
   if (selectedRun.workflowStatus) {
     const live = element("section", "live-run-summary");
     live.append(element("strong", "", selectedRun.workflowPhase ?? "Parent workflow in progress"));
@@ -546,7 +613,7 @@ async function pollRun() {
       activeRunId = null;
       activeRunTask = null;
       pollTimer = null;
-      if (!replaying) await loadHistory({ preferPrompt: lastFanoutPrompt });
+      await loadHistory({ preferPrompt: replaying ? run.request : lastFanoutPrompt });
       lastFanoutPrompt = null;
     }
   } catch (error) {
@@ -557,7 +624,7 @@ async function pollRun() {
   }
 }
 
-async function startTask(task) {
+async function startTask(task, { inputSource = "typed" } = {}) {
   showOutput();
   setConsoleState("running", "Starting");
   runOutput.textContent = "Starting…";
@@ -565,6 +632,7 @@ async function startTask(task) {
     const body = { task };
     if (task === "fanout") {
       body.request = document.querySelector("#fanout-request").value.trim();
+      body.inputSource = inputSource;
       body.maxBranches = Number(document.querySelector("#max-branches").value);
       body.maxDepth = Number(document.querySelector("#max-depth").value);
       lastFanoutPrompt = body.request;
@@ -588,11 +656,17 @@ async function startTask(task) {
       if (!completedAgents.some((agent) => agent.id === run.agent.id)) completedAgents.push(run.agent);
       selectAgent(completedAgents.find((agent) => agent.id === run.agent.id) ?? run.agent, {
         matchMessage: run.message,
+        prefilledSlots: run.slots ?? {},
+        request: run.request,
       });
       switchWorkspace("agents");
-      agentOutput.textContent = `[warm path] ${run.message}\nFill the saved runbook inputs, then choose Use completed agent.`;
-      setConsoleState("succeeded", "Saved agent matched");
+      const missing = run.missingSlots ?? [];
+      agentOutput.textContent = missing.length
+        ? `[warm path] ${run.message}\nFill the missing inputs (${missing.join(", ")}), then choose Use completed agent.`
+        : `[warm path] ${run.message}\nAll inputs were recovered from the ${run.inputSource} prompt.`;
+      setConsoleState("succeeded", missing.length ? "Agent needs inputs" : "Saved agent matched");
       lastFanoutPrompt = null;
+      if (!missing.length) await runMatchedAgent(run.inputSource);
       return;
     }
     activeRunId = run.id;
@@ -609,9 +683,138 @@ async function startTask(task) {
   }
 }
 
+function resetMicrophoneUi(label = voiceConfigured ? "READY" : "SET UP") {
+  microphoneButton.classList.remove("recording", "transcribing");
+  microphoneButton.querySelector("strong").textContent = "Speak";
+  microphoneButton.setAttribute("aria-label", "Start microphone recording");
+  microphoneButton.disabled = !voiceSupported || Boolean(activeRunId);
+  voiceState.textContent = label;
+}
+
+function releaseMicrophone() {
+  window.clearTimeout(microphoneTimer);
+  microphoneTimer = null;
+  microphoneStream?.getTracks().forEach((track) => track.stop());
+  microphoneStream = null;
+}
+
+async function loadVoiceStatus() {
+  const supported = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  voiceSupported = supported;
+  if (!supported) {
+    voiceConfigured = false;
+    resetMicrophoneUi("UNSUPPORTED");
+    microphoneButton.title = "This browser does not support microphone recording.";
+    return;
+  }
+  try {
+    const response = await fetch("/api/voice/status");
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Could not check voice status");
+    voiceConfigured = payload.configured === true;
+    resetMicrophoneUi();
+    microphoneButton.title = voiceConfigured
+      ? `Transcribes locally through the Branch server using ${payload.model}`
+      : "Click to connect an OpenAI transcription key to this local server process.";
+  } catch (error) {
+    voiceConfigured = false;
+    resetMicrophoneUi("VOICE OFFLINE");
+    microphoneButton.title = error.message;
+  }
+}
+
+async function configureVoice() {
+  const apiKey = window.prompt(
+    "Paste an OpenAI API key for microphone transcription. It stays in this local Branch server process and is never written to the repository."
+  )?.trim();
+  if (!apiKey) return false;
+  const response = await fetch("/api/voice/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
+  let payload = {};
+  try { payload = await response.json(); } catch { /* Error handling below supplies a stable fallback. */ }
+  if (!response.ok) throw new Error(payload.error ?? "Could not configure voice transcription");
+  voiceConfigured = true;
+  resetMicrophoneUi("READY");
+  return true;
+}
+
+async function submitRecording() {
+  const mimeType = mediaRecorder?.mimeType || "audio/webm";
+  const recording = new Blob(audioChunks, { type: mimeType });
+  audioChunks = [];
+  releaseMicrophone();
+  microphoneButton.classList.remove("recording");
+  microphoneButton.classList.add("transcribing");
+  microphoneButton.querySelector("strong").textContent = "Listen";
+  microphoneButton.disabled = true;
+  voiceState.textContent = "TRANSCRIBING";
+  try {
+    const response = await fetch("/api/voice/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": mimeType },
+      body: recording,
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Could not transcribe recording");
+    document.querySelector("#fanout-request").value = payload.transcript;
+    voiceState.textContent = "ROUTING";
+    await startTask("fanout", { inputSource: "voice" });
+  } catch (error) {
+    runOutput.textContent = `[voice] ${error.message}`;
+    showOutput();
+    setConsoleState("failed", "Voice failed");
+  } finally {
+    mediaRecorder = null;
+    resetMicrophoneUi();
+  }
+}
+
+async function toggleMicrophone() {
+  if (mediaRecorder?.state === "recording") {
+    mediaRecorder.stop();
+    return;
+  }
+  if (activeRunId) return;
+  try {
+    if (!voiceConfigured && !(await configureVoice())) return;
+    microphoneStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+    const preferredType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "";
+    mediaRecorder = preferredType
+      ? new MediaRecorder(microphoneStream, { mimeType: preferredType })
+      : new MediaRecorder(microphoneStream);
+    audioChunks = [];
+    mediaRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size) audioChunks.push(event.data);
+    });
+    mediaRecorder.addEventListener("stop", submitRecording, { once: true });
+    mediaRecorder.start();
+    microphoneButton.classList.add("recording");
+    microphoneButton.querySelector("strong").textContent = "Stop";
+    microphoneButton.setAttribute("aria-label", "Stop microphone recording and run prompt");
+    voiceState.textContent = "RECORDING";
+    microphoneTimer = window.setTimeout(() => {
+      if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+    }, 15_000);
+  } catch (error) {
+    releaseMicrophone();
+    runOutput.textContent = `[voice] ${error.message}`;
+    showOutput();
+    setConsoleState("failed", "Microphone blocked");
+    resetMicrophoneUi("TRY AGAIN");
+  }
+}
+
 document.querySelectorAll("[data-task]").forEach((button) => {
-  button.addEventListener("click", () => startTask(button.dataset.task));
+  button.addEventListener("click", () => startTask(button.dataset.task, { inputSource: "typed" }));
 });
+microphoneButton.addEventListener("click", toggleMicrophone);
 document.querySelector("#run-search").addEventListener("input", renderRunList);
 document.querySelector("#refresh-history").addEventListener("click", () => loadHistory());
 document.querySelector("#toggle-output").addEventListener("click", () => outputDrawer.classList.toggle("collapsed"));
@@ -633,6 +836,7 @@ agentStopButton.addEventListener("click", async () => {
 loadHistory().catch((error) => {
   branchCanvas.replaceChildren(element("div", "canvas-empty error", error.message));
 });
+loadVoiceStatus();
 
 const runSidebar = document.querySelector("#run-sidebar");
 const agentsSidebar = document.querySelector("#agents-sidebar");
@@ -707,13 +911,15 @@ function renderAgentList() {
     const meta = element("span", "run-list-meta");
     meta.append(element("span", "", `${agent.step_count} steps`), element("span", "", `v${agent.version}`));
     button.append(top, element("strong", "", agent.name), meta);
-    button.addEventListener("click", () => selectAgent(agent, { matchMessage: "" }));
+    button.addEventListener("click", () => selectAgent(agent, { matchMessage: "", prefilledSlots: {}, request: "" }));
     list.append(button);
   }
 }
 
-function selectAgent(agent, { matchMessage = null } = {}) {
+function selectAgent(agent, { matchMessage = null, prefilledSlots = null, request = null } = {}) {
   selectedAgent = agent;
+  if (prefilledSlots !== null) selectedAgentPrefill = { ...prefilledSlots };
+  if (request !== null) selectedAgentRequest = request;
   renderAgentList();
   if (matchMessage !== null) document.querySelector("#agent-match-message").textContent = matchMessage;
   renderAgentDetail();
@@ -726,21 +932,23 @@ function agentInput(slot) {
   const title = element("span", "", slot.name.replaceAll("_", " "));
   title.append(element("small", "", slot.required ? "required" : "optional"));
   let input;
+  const hasPrefill = Object.hasOwn(selectedAgentPrefill, slot.name);
+  const initialValue = hasPrefill ? selectedAgentPrefill[slot.name] : slot.default;
   if (slot.type === "boolean") {
     input = document.createElement("input");
     input.type = "checkbox";
-    input.checked = slot.default === true;
+    input.checked = initialValue === true;
   } else if (slot.type === "object" || slot.type === "array") {
     input = document.createElement("textarea");
     input.rows = 3;
     input.placeholder = slot.type === "array" ? "[]" : "{}";
-    if (slot.default !== undefined) input.value = JSON.stringify(slot.default, null, 2);
+    if (initialValue !== undefined) input.value = JSON.stringify(initialValue, null, 2);
   } else {
     input = document.createElement("input");
     input.type = slot.type === "integer" || slot.type === "number" ? "number" : "text";
     if (slot.type === "number") input.step = "any";
     input.placeholder = slot.prompt ?? slot.description ?? slot.name;
-    if (slot.default !== undefined) input.value = String(slot.default);
+    if (initialValue !== undefined) input.value = String(initialValue);
   }
   input.name = slot.name;
   input.required = slot.required && slot.type !== "boolean";
@@ -835,17 +1043,46 @@ function readAgentSlots(form) {
   return values;
 }
 
-async function startAgentReplay(event) {
-  event.preventDefault();
+function confirmationPrompt(agent, values) {
+  const template = agent.runbook.steps.find((step) => step.irreversible)?.confirmation_prompt
+    ?? `Run the irreversible step in ${agent.name}?`;
+  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_match, name) => String(values[name] ?? name));
+}
+
+async function runMatchedAgent(inputSource) {
+  if (!selectedAgent) return;
+  const form = document.querySelector("#agent-use-form");
+  const values = readAgentSlots(form);
+  let confirmed = false;
+  if (selectedAgent.has_irreversible_steps) {
+    confirmed = window.confirm(
+      `${confirmationPrompt(selectedAgent, values)}\n\nBranch will run the saved agent in safe stub mode; no provider is contacted.`
+    );
+    if (!confirmed) {
+      agentOutput.textContent += "\n[warm path] Confirmation declined. The matched agent is ready when you are.";
+      setConsoleState("succeeded", "Waiting for confirmation");
+      return;
+    }
+    const checkbox = document.querySelector("#agent-confirm");
+    if (checkbox) checkbox.checked = true;
+  }
+  await startAgentReplay(null, { confirmedOverride: confirmed, inputSource });
+}
+
+async function startAgentReplay(event, { confirmedOverride = null, inputSource = "typed" } = {}) {
+  event?.preventDefault();
   if (!selectedAgent) return;
   setConsoleState("running", "Reusing agent");
   agentOutput.textContent = "Starting saved runbook…";
   try {
+    const form = event?.currentTarget ?? document.querySelector("#agent-use-form");
     const body = {
       task: "replay",
       agentId: selectedAgent.id,
-      slots: readAgentSlots(event.currentTarget),
-      confirmed: document.querySelector("#agent-confirm")?.checked === true,
+      slots: readAgentSlots(form),
+      confirmed: confirmedOverride ?? document.querySelector("#agent-confirm")?.checked === true,
+      request: selectedAgentRequest || selectedAgent.name,
+      inputSource,
     };
     const response = await fetch("/api/runs", {
       method: "POST",

@@ -103,6 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out", default="runs", help="output directory")
     parser.add_argument(
+        "--input-source",
+        choices=["typed", "voice"],
+        default="typed",
+        help="where the prompt entered Branch (stored with run history)",
+    )
+    parser.add_argument(
         "--runbook-store",
         default="demo/runbook-store.json",
         help="durable runbook store the parent updates after learning",
@@ -250,6 +256,18 @@ async def run_demo(args: argparse.Namespace) -> int:
     trajectories = tree.trajectories
     paths = search.persist(trajectories, job_id)
     directory = paths[0].parent
+    (directory / "request.json").write_text(
+        json.dumps(
+            {
+                "request": args.request,
+                "input_source": args.input_source,
+                "created_at": started_at,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (directory / "tree.json").write_text(
         json.dumps(
             {

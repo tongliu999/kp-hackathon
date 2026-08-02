@@ -102,10 +102,32 @@ test("console exposes completed agents and routes matching prompts to warm repla
   assert.match(app, /agent_match/);
   assert.match(app, /Use completed agent/);
   assert.match(app, /startAgentReplay/);
+  assert.match(app, /runMatchedAgent/);
+  assert.match(app, /prefilledSlots/);
+  assert.match(app, /inputSource/);
   assert.match(server, /\/api\/agents\/match/);
   assert.match(server, /completed_agents/);
   assert.match(server, /no branch search was launched/);
   assert.match(server, /input\.task === "fanout"/);
+  assert.match(server, /listReplayRuns/);
+  assert.match(server, /persistReplay/);
+});
+
+test("console records, transcribes, and routes microphone prompts through the shared runner", () => {
+  assert.match(html, /id="microphone-button"/);
+  assert.match(html, /id="voice-state"/);
+  assert.match(app, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(app, /new MediaRecorder/);
+  assert.match(app, /\/api\/voice\/status/);
+  assert.match(app, /\/api\/voice\/config/);
+  assert.match(app, /\/api\/voice\/transcribe/);
+  assert.match(app, /window\.prompt/);
+  assert.match(app, /startTask\("fanout", \{ inputSource: "voice" \}\)/);
+  assert.match(server, /OPENAI_API_KEY/);
+  assert.match(server, /\/v1\/audio\/transcriptions/);
+  assert.match(server, /\/api\/voice\/config/);
+  assert.match(server, /requestSource/);
+  assert.match(server, /request\.json/);
 });
 
 test("console includes a no-terminal authentication workspace", () => {
