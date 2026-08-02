@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "exact_spoken_request": "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.",
+  "confirmation_response": "Yes, book it.",
+  "expected_intent": "restaurant-reservation",
+  "warm_runbook_match_text": "Reserve an Italian restaurant table in San Francisco tomorrow evening for two at seven.",
+  "normalized_match_tokens": [
+    "at",
+    "evening",
+    "francisco",
+    "in",
+    "italian",
+    "restaurant",
+    "san",
+    "schedule",
+    "seven",
+    "tomorrow",
+    "two"
+  ]
+}
