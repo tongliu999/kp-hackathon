@@ -40,6 +40,7 @@ from typing import Any, Protocol
 
 from .booking_bridge import NodeBookingRunner
 from .cold_tasks import ColdTaskCoordinator, NotificationKind
+from .dialogue import AsyncSlotFillingDialogue
 from .distiller import DistillationError, distill
 from .executor import RunbookExecutor
 from .judge import JudgeError, PairwiseJudge, SailJudgeModel, longest_successful_branch
@@ -51,13 +52,28 @@ FIXTURES = ROOT / "fixtures" / "trajectories"
 STORE = ROOT / "demo" / "assistant-store.json"
 BOOKINGS = ROOT / "demo" / "assistant-bookings.json"
 
-SLOT_VALUES: dict[str, Any] = {
-    "party_size": 2,
-    "cuisine": "Italian",
-    "city": "San Francisco",
-    "date": "tomorrow",
-    "time": "7:00 PM",
-}
+_HUMAN_SECONDS = 0.0
+
+
+def dialogue_wait_seconds() -> float:
+    """Time the human spent answering slot questions since the last reset."""
+    global _HUMAN_SECONDS
+    spent, _HUMAN_SECONDS = _HUMAN_SECONDS, 0.0
+    return spent
+
+
+class AskUser:
+    """Async dialogue I/O over the console, timing how long the human takes."""
+
+    async def listen(self) -> str:
+        global _HUMAN_SECONDS
+        asked = time.perf_counter()
+        reply = await asyncio.to_thread(input, "  you > ")
+        _HUMAN_SECONDS += time.perf_counter() - asked
+        return reply
+
+    async def say(self, text: str) -> None:
+        print(f"  ai  > {text}")
 
 
 def say(text: str) -> None:
@@ -152,26 +168,50 @@ class _Stopwatch(Protocol):
     waited: float
 
 
-async def _replay(executor: RunbookExecutor, matched, gate: _Stopwatch) -> float:
-    """Replay a known runbook and return the time the MACHINE spent.
+async def _replay(
+    dialogue: AsyncSlotFillingDialogue,
+    executor: RunbookExecutor,
+    utterance: str,
+    gate: _Stopwatch,
+) -> tuple[float, bool]:
+    """Ask for this run's details, then replay. Returns (machine seconds, ok).
 
-    The human's thinking time at the confirmation gate is subtracted. Counting it
-    would make the warm number depend on how fast someone says "yes", and the
-    contrast this whole project rests on is machine work versus machine work.
+    The dialogue asks for every slot rather than assuming them, which is what
+    makes a learned skill reusable: a runbook whose values are fixed at
+    distillation time can only ever redo the request that created it.
+
+    Human time is subtracted — both the slot answers and the confirmation. The
+    warm number must not depend on how fast someone types, because the contrast
+    this project rests on is machine work versus machine work.
     """
-    runbook = Runbook.from_dict(matched)
-    slots = {
-        s.name: SLOT_VALUES.get(s.name, 2 if s.type.value == "integer" else f"<{s.name}>")
-        for s in runbook.slots
-    }
     gate.waited = 0.0
     started = time.perf_counter()
-    result = await executor.execute(runbook, slots)
-    elapsed = time.perf_counter() - started - gate.waited
+    outcome = await dialogue.run(utterance)
+    if not outcome.ready or outcome.invocation is None:
+        return 0.0, False
 
-    for step in result.steps:
-        print(f"      {step.action:20} {step.status.value:11} {step.output or step.error or ''}")
-    return max(elapsed, 0.0)
+    invocation = outcome.invocation
+    human = dialogue_wait_seconds()
+    result = await executor.execute(invocation.runbook, invocation.slot_values)
+    elapsed = time.perf_counter() - started - gate.waited - human
+
+    # Say what happened, not what the objects look like. Raw step dicts on a
+    # projector read as debug output and bury the one fact anyone wants.
+    if result.succeeded:
+        output = result.steps[-1].output or {}
+        ref = output.get("confirmation_id", "no reference returned")
+        stub = " (stub — nothing was really booked)" if output.get("stub") else ""
+        say(f"Booked. Your confirmation is {ref}.{stub}")
+    else:
+        failed = next((s for s in result.steps if s.error), None)
+        if failed is None:
+            say("I couldn't complete that, and nothing was booked.")
+        elif failed.status.value == "confirmation_rejected":
+            say("Cancelled — nothing was booked.")
+        else:
+            say(f"I couldn't finish the {failed.action.split('.')[-1]} step, so nothing was booked.")
+
+    return max(elapsed, 0.0), result.succeeded
 
 
 async def session(args) -> int:
@@ -200,6 +240,7 @@ async def session(args) -> int:
         NodeBookingRunner(stub=not args.live, confirmation_is_upstream=True, store_path=BOOKINGS),
         gate,
     )
+    dialogue = AsyncSlotFillingDialogue(store, AskUser(), AskUser())
     worker = LearningWorker(store, recorded=args.recorded, app=args.app)
     coordinator = ColdTaskCoordinator(worker, ConsoleNotifier())
 
@@ -229,8 +270,11 @@ async def session(args) -> int:
                 await coordinator.submit_no_match(utterance)
                 continue
 
-            say(f"I already know how to do that — {matched['id']}. Doing it now.")
-            elapsed = await _replay(executor, matched, gate)
+            say(f"I already know how to do that — {matched['id']}.")
+            elapsed, ok = await _replay(dialogue, executor, utterance, gate)
+            if not ok:
+                print("      (nothing was booked)\n")
+                continue
             cold = worker.last_seconds
             print(f"\n      answered in {elapsed:.1f}s"
                   + (f"  — the first time you asked, it took {cold:.1f}s. "
