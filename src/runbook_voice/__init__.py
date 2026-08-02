@@ -19,6 +19,13 @@ from .dialogue import (
     parse_slot_value,
     slot_question,
 )
+from .distiller import (
+    DistillationError,
+    SlotRule,
+    TaskVocabulary,
+    VerbRule,
+    distill,
+)
 from .executor import (
     ConfirmationGate,
     ConfirmationRequest,
@@ -84,6 +91,7 @@ __all__ = [
     "DialogueOutcome",
     "DialogueOutput",
     "DialogueStatus",
+    "DistillationError",
     "ExecutionResult",
     "ExecutionStatus",
     "ExactYesConfirmationGate",
@@ -112,6 +120,7 @@ __all__ = [
     "SlotDefinition",
     "SlotFillingDialogue",
     "SlotResolutionError",
+    "SlotRule",
     "SlotType",
     "SynthesisOutcome",
     "SynthesisStatus",
@@ -119,6 +128,8 @@ __all__ = [
     "StepStatus",
     "SpokenConfirmationInput",
     "SpokenConfirmationOutput",
+    "TaskVocabulary",
+    "VerbRule",
     "VoiceEchoLoop",
     "WarmReplayJoin",
     "WarmReplayOutcome",
@@ -130,6 +141,7 @@ __all__ = [
     "boot",
     "confirmation_text",
     "connect",
+    "distill",
     "parse_slot_value",
     "slot_question",
     "substitute_slots",

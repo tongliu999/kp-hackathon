@@ -251,6 +251,49 @@ language, failure pivots, and rehearsal checklist live in
 request fixture is [`demo/demo_config.json`](demo/demo_config.json); edit both
 only together and run the test suite to catch phrasing or normalization drift.
 
+## Distilling a runbook from a winning trajectory (TON-21)
+
+`distill(trajectory)` turns the winning branch's trajectory into a schema-valid
+runbook. It is deterministic and offline — no model call, no credentials:
+
+```bash
+runbook-distill fixtures/trajectories/branch-0.json -o fixtures/runbooks/distilled-branch-0.json
+python schema/validate.py
+```
+
+The work is generalization, not transcription. The trajectory records browser
+mechanics carrying one request's values; the runbook holds **abstract verbs**
+(`restaurant.book`, never a click on a selector, so a provider redesign cannot
+break it) over **declared slots** (so the next caller can ask for four people on
+Sunday). Steps that were abandoned, errored, or were pure reasoning are dropped,
+and a field written twice keeps only the last write.
+
+Domain knowledge lives in a `TaskVocabulary` — a data table of verbs and slot
+patterns. Adding a domain means adding a vocabulary, not a branch in the
+pipeline.
+
+The distiller refuses rather than emitting a runbook that cannot generalize:
+
+```text
+$ runbook-distill fixtures/trajectories/branch-1.json
+refused branch-1.json: step 5 writes 'Ristorante Adriatico', which the request
+does not mention. It cannot become a slot, and baking it in would build a
+runbook that only ever repeats this one run.
+```
+
+Two consequences of the surrounding contracts are load-bearing. Every `{{ref}}`
+must resolve to a declared slot that is `required` or has a `default`: an
+optional slot with no default resolves to nothing rather than failing at the
+door, so the reference raises `SlotResolutionError` mid-replay, after earlier
+steps have already run. And `description` is written for the store's matcher,
+which scores token coverage against `min(len(query), len(candidate))` — extra
+words there dilute the score rather than sharpening it.
+
+The terminal booking step is synthesized rather than observed. Branching search
+is forbidden from running irreversible actions, so the winning trajectory stops
+at "Ready to confirm" and no trajectory can ever contain the step the runbook
+most needs to gate.
+
 ## Warm replay
 
 [`WarmReplayJoin`](docs/warm-replay.md) validates untrusted synthesized M0
