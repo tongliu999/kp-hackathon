@@ -11,10 +11,16 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
+voice = [
+  "sounddevice>=0.5,<1",
+]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+runbook-voice-echo = "runbook_voice.voice_loop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -23,4 +29,3 @@ where = ["src"]
 addopts = "-q"
 testpaths = ["tests"]
 asyncio_mode = "auto"
-
