@@ -33,6 +33,7 @@ dev = [
 ]
 
 [project.scripts]
+runbook-demo = "runbook_voice.demo:main"
 runbook-branch-search-demo = "runbook_voice.branch_search_demo:main"
 runbook-cold-task-demo = "runbook_voice.cold_task_demo:main"
 runbook-distill = "runbook_voice.distiller:main"
