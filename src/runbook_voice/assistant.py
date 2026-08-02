@@ -84,6 +84,10 @@ class LearningWorker:
         self._recorded = recorded
         self._app = app
         self.last_seconds: float | None = None
+        # Set by the session to the moment YOU asked, so the reported figure is
+        # time-to-answer rather than time-inside-the-worker. Those differ by the
+        # acknowledgement round trip, and time-to-answer is what an audience feels.
+        self.answer_clock: float | None = None
 
     async def run(self, request: str, job_id: str) -> str:
         started = time.perf_counter()
@@ -104,11 +108,12 @@ class LearningWorker:
             return f"I tried {len(trajectories)} approaches but could not turn any into a repeatable skill: {exc}"
 
         self._store.save(document)
-        self.last_seconds = time.perf_counter() - started
+        self.last_seconds = time.perf_counter() - (self.answer_clock or started)
         return (
             f"I worked out how to do that — tried {len(trajectories)} approaches and kept "
             f"{winner['branch_id']} because {why[:120].rstrip('.')}. "
-            f"I've saved it as a skill, so ask me again and it'll be instant."
+            f"I've saved it as a skill, so ask me again and it'll be instant. "
+            f"[answer took {self.last_seconds:.1f}s]"
         )
 
 
@@ -197,20 +202,23 @@ async def session(args) -> int:
             if utterance.casefold() in {"quit", "exit"}:
                 break
 
+            asked_at = time.perf_counter()
             matched = store.lookup(utterance)
             if matched is None:
                 # Released, not blocked: submit_no_match returns as soon as the
                 # acknowledgement is spoken, so the prompt comes straight back.
+                worker.answer_clock = asked_at
                 await coordinator.submit_no_match(utterance)
                 continue
 
-            say(f"I know how to do that — {matched['id']}.")
+            say(f"I already know how to do that — {matched['id']}. Doing it now.")
             elapsed = await _replay(executor, matched, gate)
             cold = worker.last_seconds
-            if cold:
-                print(f"\n      warm {elapsed:.1f}s vs cold {cold:.1f}s — {cold / elapsed:.0f}x faster (machine time; your confirmation is not counted)\n")
-            else:
-                print(f"\n      done in {elapsed:.1f}s\n")
+            print(f"\n      answered in {elapsed:.1f}s"
+                  + (f"  — the first time you asked, it took {cold:.1f}s. "
+                     f"{cold / elapsed:.0f}x faster, nothing changed but the cache."
+                     if cold else "")
+                  + "\n      (machine time; the pause was you confirming)\n")
     finally:
         # Do not cancel: a cold task still running has boxes booted and a judge
         # call in flight, and killing it mid-flight leaks both.
