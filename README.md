@@ -107,3 +107,11 @@ An irreversible step is handed to the configured `ConfirmationGate` immediately
 before dispatch. Only a literal `True` permits execution. Rejection, a missing
 gate, or a gate error stops the runbook without calling the irreversible action.
 The executor deliberately provides no retry behavior.
+
+## Demo operations
+
+The contract-tested request, three-minute stage cues, presenter roles, safety
+language, failure pivots, and rehearsal checklist live in
+[`docs/demo-run-of-show.md`](docs/demo-run-of-show.md). The machine-readable
+request fixture is [`demo/demo_config.json`](demo/demo_config.json); edit both
+only together and run the test suite to catch phrasing or normalization drift.
