@@ -14,6 +14,7 @@ import math
 import os
 import re
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterator, Mapping, Protocol, Sequence, TypeAlias
@@ -117,6 +118,30 @@ _ALIASES = _aliases(
     ("weather", "forecast", "temperature"),
 )
 
+# The canonical side of the table is the vocabulary of *concepts* the product
+# knows about: what kind of thing a request is about, never which instance of it.
+_CONCEPTS = frozenset(_ALIASES.values())
+_ALIAS_TERMS = tuple(sorted(_ALIASES))
+
+# A token that names a concept is what the request *means*; anything else
+# ("japanese", "sunday", "7pm", "san francisco") is an instance value, which is
+# precisely what slots exist to capture.  Values still count -- two requests that
+# share them are more alike -- but a missing one must not sink an otherwise
+# identical intent, so they weigh a quarter of a concept.
+_CONCEPT_WEIGHT = 1.0
+_VALUE_WEIGHT = 0.25
+
+# Below this much shared weight there is no intent in common worth replaying: a
+# single incidental word ("italian") is a coincidence, not a request to reuse.
+_MINIMUM_EVIDENCE = 0.5
+
+# Fuzzy comparison is for slips, not for synonyms.  Short words are excluded
+# because one edit is the whole difference between real words (table/cable,
+# book/look, hair/hail), and the first letter must agree because typing and
+# speech-to-text slips almost never land there.
+_MIN_FUZZY_LENGTH = 6
+_LONG_WORD_LENGTH = 9
+
 _MATCH_FIELDS = frozenset(
     {
         "aliases",
@@ -138,12 +163,112 @@ _MATCH_FIELDS = frozenset(
 )
 
 
+def _edit_distance(left: str, right: str, limit: int) -> int:
+    """Damerau-Levenshtein distance, abandoned as soon as it exceeds ``limit``.
+
+    Transpositions count as one edit because "restuarant" is one slip of the
+    fingers away from "restaurant", not two.
+    """
+
+    if abs(len(left) - len(right)) > limit:
+        return limit + 1
+    before_previous: list[int] = []
+    previous = list(range(len(right) + 1))
+    for row, left_char in enumerate(left, start=1):
+        current = [row] + [0] * len(right)
+        for column, right_char in enumerate(right, start=1):
+            cost = 0 if left_char == right_char else 1
+            current[column] = min(
+                previous[column] + 1,
+                current[column - 1] + 1,
+                previous[column - 1] + cost,
+            )
+            if (
+                row > 1
+                and column > 1
+                and left_char == right[column - 2]
+                and left[row - 2] == right_char
+            ):
+                current[column] = min(current[column], before_previous[column - 2] + 1)
+        if min(current) > limit:
+            return limit + 1
+        before_previous, previous = previous, current
+    return previous[-1]
+
+
+@lru_cache(maxsize=8192)
+def _similarity(left: str, right: str) -> float:
+    """1.0 for identical words, ~0.9 for one slip, 0.0 for anything else.
+
+    Voice transcription and fast typing produce "resturant" and "restuarant" for
+    "restaurant"; exact set equality throws away the single most informative
+    token in the request when they do.
+    """
+
+    if left == right:
+        return 1.0
+    shorter = min(len(left), len(right))
+    if shorter < _MIN_FUZZY_LENGTH or left[0] != right[0]:
+        return 0.0
+    tolerance = 2 if shorter >= _LONG_WORD_LENGTH else 1
+    distance = _edit_distance(left, right, tolerance)
+    if distance > tolerance:
+        return 0.0
+    return 1.0 - distance / max(len(left), len(right))
+
+
+@lru_cache(maxsize=8192)
+def _canonical(word: str) -> str:
+    """Normalize a word onto a concept, tolerating a misspelling of one."""
+
+    known = _ALIASES.get(word)
+    if known is not None:
+        return known
+    best_term: str | None = None
+    best_similarity = 0.0
+    for term in _ALIAS_TERMS:  # sorted, so ties resolve the same way every time
+        similarity = _similarity(word, term)
+        if similarity > best_similarity:
+            best_term, best_similarity = term, similarity
+    return _ALIASES[best_term] if best_term is not None else word
+
+
 def _tokens(text: str) -> frozenset[str]:
     return frozenset(
-        _ALIASES.get(word, word)
+        _canonical(word)
         for word in _WORD_RE.findall(text.casefold())
         if word not in _STOP_WORDS
     )
+
+
+def _weight(token: str) -> float:
+    return _CONCEPT_WEIGHT if token in _CONCEPTS else _VALUE_WEIGHT
+
+
+def _weigh(tokens: frozenset[str]) -> float:
+    return sum(_weight(token) for token in tokens)
+
+
+def _shared_weight(query: frozenset[str], candidate: frozenset[str]) -> float:
+    """Weight of what the two texts share, pairing near-identical leftovers.
+
+    Leftovers are paired greedily, one to one, over sorted tokens so the result
+    depends only on the two texts.
+    """
+
+    total = _weigh(query & candidate)
+    unpaired = sorted(candidate - query)
+    for word in sorted(query - candidate):
+        best_other: str | None = None
+        best_similarity = 0.0
+        for other in unpaired:
+            similarity = _similarity(word, other)
+            if similarity > best_similarity:
+                best_other, best_similarity = other, similarity
+        if best_other is not None:
+            unpaired.remove(best_other)
+            total += best_similarity * min(_weight(word), _weight(best_other))
+    return total
 
 
 def _strings(value: JSONValue) -> Iterator[str]:
@@ -168,10 +293,18 @@ def _match_text(runbook: Mapping[str, JSONValue]) -> str:
 class DeterministicSemanticMatcher:
     """A dependency-free, deterministic approximation of intent matching.
 
-    It combines synonym-normalized token coverage with Jaccard similarity.
+    It combines synonym-normalized token coverage with Jaccard similarity, both
+    computed over *weighted* tokens: a word that names a concept the product
+    knows about counts four times what an instance value counts, and a word one
+    slip away from another ("resturant"/"restaurant") counts as very nearly that
+    word.  Together those make the score track what a request means rather than
+    which words it happens to spell correctly, so "book me a japanese resturant
+    on sunday for 4 pm" reaches the skill distilled from "book a table".
+
     The default is intentionally conservative enough to preserve the cold-path
-    ``None`` seam, while still handling common rephrasings such as
-    "reserve a table" / "arrange a dinner booking".
+    ``None`` seam: an unrelated errand ("get me a haircut", "book me a flight to
+    tokyo") shares at most the verb, and half a skill's concepts is not enough
+    to clear the threshold.
     """
 
     def __init__(self, *, threshold: float = 0.48) -> None:
@@ -186,20 +319,29 @@ class DeterministicSemanticMatcher:
         if not query:
             return None
 
+        query_weight = _weigh(query)
         best: Runbook | None = None
         best_score = 0.0
         for runbook in runbooks:
             candidate = _tokens(_match_text(runbook))
             if not candidate:
                 continue
-            overlap = query & candidate
-            if not overlap:
+            shared = _shared_weight(query, candidate)
+            if shared < _MINIMUM_EVIDENCE:
                 continue
+            candidate_weight = _weigh(candidate)
 
-            # Coverage makes concise rephrasings useful; Jaccard penalizes an
-            # accidental shared word in otherwise unrelated descriptions.
-            coverage = len(overlap) / min(len(query), len(candidate))
-            jaccard = len(overlap) / len(query | candidate)
+            # Coverage reads whichever side is the more concentrated statement
+            # of the intent, so neither a terse skill ("book a table") nor a
+            # detailed request is punished for the words the other omits.  The
+            # weights are what make that safe: the words a request adds are
+            # usually values, which cost a quarter of a concept, while a
+            # concept the other side never mentions -- flight, haircut --
+            # costs full price and is what keeps an errand off this skill.
+            coverage = shared / min(query_weight, candidate_weight)
+            # Jaccard still penalizes an accidental shared word between two
+            # otherwise unrelated descriptions.
+            jaccard = shared / (query_weight + candidate_weight - shared)
             score = 0.7 * coverage + 0.3 * jaccard
             if score > best_score:
                 best = runbook

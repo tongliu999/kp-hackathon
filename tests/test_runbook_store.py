@@ -267,3 +267,171 @@ def test_matcher_cannot_return_an_unpersisted_runbook(tmp_path: Path) -> None:
 def test_deterministic_matcher_validates_threshold() -> None:
     with pytest.raises(ValueError, match="between 0 and 1"):
         DeterministicSemanticMatcher(threshold=1.1)
+
+
+# A skill as the distiller now stores one: the values that became slots are
+# stripped out of the remembered example, so all that is left is the intent.
+LEARNED_SKILL: Runbook = {
+    "id": "restaurant-reservation",
+    "name": "Book a restaurant table",
+    "version": "1",
+    "description": "Book a restaurant table for dinner",
+    "utterance_examples": ["book a table"],
+    "slots": [],
+    "steps": [],
+}
+
+# A hand-written runbook whose examples still carry one instance's values.  It
+# is the harder shape to match: most of its words are values nobody will repeat.
+BUNDLED_SKILL: Runbook = {
+    "id": "book-restaurant-table",
+    "name": "Book a restaurant table",
+    "version": "1",
+    "description": "Reserve or book a restaurant table for dinner",
+    "utterance_examples": [
+        "book me a table for two friday at seven",
+        "get us a dinner reservation saturday night",
+        "reserve somewhere italian for four people tomorrow at eight",
+    ],
+    "slots": [],
+    "steps": [],
+}
+
+FLIGHT_SKILL: Runbook = {
+    "id": "book-flight",
+    "name": "Book a flight",
+    "version": "1",
+    "description": "Book an airline flight",
+    "utterance_examples": ["book a flight"],
+    "slots": [],
+    "steps": [],
+}
+
+HAIRCUT_SKILL: Runbook = {
+    "id": "book-haircut",
+    "name": "Book a haircut",
+    "version": "1",
+    "description": "Book a haircut at a salon",
+    "utterance_examples": ["book a haircut"],
+    "slots": [],
+    "steps": [],
+}
+
+
+REPHRASINGS = [
+    # The live failure: transcription and fast typing misspell the one token
+    # that carries the intent, and abbreviate the rest.
+    "book me a japanese resturant on sunday for 4 pm",
+    "book me an italian restuarant for 2 tmmrw at 7pm",
+    "reserve a restuarant table tomorrow",
+    # Abbreviated values.
+    "book a table tmrw 7pm for 4",
+    # Different slot values from the ones the skill was learned on.
+    "book a japanese restaurant on saturday",
+    # Same words, different order, with the request's own filler.
+    "for 4 people on sunday, a japanese restaurant reservation",
+    # Synonyms, which already worked and must keep working.
+    "Could you arrange a dinner reservation for me?",
+    # More detail than the skill remembers must not score worse than less.
+    "Book a table for two at an Italian restaurant in San Francisco"
+    " tomorrow evening at seven.",
+]
+
+UNRELATED = [
+    "get me a haircut",
+    "deploy the website",
+    "what's the weather",
+    "book me a flight to tokyo tomorrow",
+    "book me an uber to the airport",
+    "reserve a hotel room for tomorrow",
+    "Summarize this quarterly report",
+    # Values with no intent attached are not a request to replay anything.
+    "sunday at 7pm for four",
+]
+
+
+@pytest.mark.parametrize("skill", [LEARNED_SKILL, BUNDLED_SKILL], ids=["learned", "bundled"])
+@pytest.mark.parametrize("utterance", REPHRASINGS)
+def test_realistic_rephrasings_reach_the_learned_skill(
+    tmp_path: Path, skill: Runbook, utterance: str
+) -> None:
+    store = JSONRunbookStore(tmp_path / "runbooks.json")
+    store.save(skill)
+
+    assert store.lookup(utterance) == skill
+
+
+@pytest.mark.parametrize("skill", [LEARNED_SKILL, BUNDLED_SKILL], ids=["learned", "bundled"])
+@pytest.mark.parametrize("utterance", UNRELATED)
+def test_unrelated_requests_still_take_the_cold_path(
+    tmp_path: Path, skill: Runbook, utterance: str
+) -> None:
+    store = JSONRunbookStore(tmp_path / "runbooks.json")
+    store.save(skill)
+
+    assert store.lookup(utterance) is None
+
+
+def test_extra_detail_never_scores_worse_than_the_bare_intent() -> None:
+    """Adding the details a request would really carry must not cost recall.
+
+    Coverage used to divide by the shorter side, so every word a request added
+    diluted it: "book a table" matched, and the same request with a cuisine and
+    a day attached fell under the threshold.  A longer, more specific request is
+    the normal case, not a degraded one.
+    """
+    matcher = DeterministicSemanticMatcher()
+    growing = [
+        "book a table",
+        "book a japanese table",
+        "book a japanese restaurant table on sunday",
+        "book a japanese restaurant table on sunday at 4 pm for 6 people",
+    ]
+
+    for utterance in growing:
+        assert matcher.match(utterance, [LEARNED_SKILL]) is LEARNED_SKILL
+
+
+def test_each_skill_wins_its_own_request_when_several_are_stored(
+    tmp_path: Path,
+) -> None:
+    store = JSONRunbookStore(tmp_path / "runbooks.json")
+    for skill in (LEARNED_SKILL, FLIGHT_SKILL, HAIRCUT_SKILL):
+        store.save(skill)
+
+    assert store.lookup("book me a japanese resturant on sunday")["id"] == (
+        "restaurant-reservation"
+    )
+    assert store.lookup("book me a flight to tokyo tomorrow")["id"] == "book-flight"
+    assert store.lookup("book me a haircut on friday")["id"] == "book-haircut"
+    assert store.lookup("deploy the website") is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # One edit from "table", but it is its own word.
+        "fix my cable",
+        # One edit from "book", likewise.
+        "please look at my calendar",
+        "i took the kids to school",
+        # One edit from "flight", but slips do not land on the first letter.
+        "there was a slight delay",
+    ],
+)
+def test_lookalike_words_are_not_treated_as_slips(utterance: str) -> None:
+    """Tolerating misspellings must not start inventing intent from real words."""
+    matcher = DeterministicSemanticMatcher()
+
+    assert matcher.match(utterance, [LEARNED_SKILL, FLIGHT_SKILL]) is None
+
+
+def test_matching_is_deterministic_and_order_independent() -> None:
+    matcher = DeterministicSemanticMatcher()
+    utterance = "book me a japanese resturant on sunday for 4 pm"
+    forward = [LEARNED_SKILL, FLIGHT_SKILL, HAIRCUT_SKILL]
+
+    first = matcher.match(utterance, forward)
+    assert first is LEARNED_SKILL
+    assert matcher.match(utterance, list(reversed(forward))) is LEARNED_SKILL
+    assert matcher.match(utterance, forward) is first

@@ -29,6 +29,8 @@ demo/runbook-store.json*
 demo/bookings.json
 demo/assistant-store.json*
 demo/assistant-bookings.json
+demo/fe-store.json*
+demo/fe-bookings.json
 demo/proof-store.json*
 demo/proof-bookings.json
 # Live branching-search output. fixtures/trajectories/ holds the locked
