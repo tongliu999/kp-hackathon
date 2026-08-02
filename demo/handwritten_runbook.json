@@ -1,0 +1,28 @@
+{
+  "id": "book-restaurant-table",
+  "name": "Book a restaurant table",
+  "version": "1",
+  "description": "Reserve or book a restaurant table for dinner",
+  "slots": [
+    {"name": "party_size", "type": "integer", "required": true, "description": "the party size"},
+    {"name": "cuisine", "type": "string", "required": true, "description": "the cuisine"},
+    {"name": "city", "type": "string", "required": true, "description": "the city"},
+    {"name": "date", "type": "string", "required": true, "description": "the date"},
+    {"name": "time", "type": "string", "required": true, "description": "the time"}
+  ],
+  "steps": [
+    {
+      "id": "search",
+      "action": "restaurant.search",
+      "arguments": {"party_size": "{{party_size}}", "cuisine": "{{cuisine}}", "city": "{{city}}", "date": "{{date}}", "time": "{{time}}"},
+      "irreversible": false
+    },
+    {
+      "id": "book",
+      "action": "restaurant.book",
+      "arguments": {"provider": "configured-provider", "party_size": "{{party_size}}", "cuisine": "{{cuisine}}", "city": "{{city}}", "date": "{{date}}", "time": "{{time}}"},
+      "irreversible": true,
+      "confirmation_prompt": "Confirm this restaurant booking"
+    }
+  ]
+}

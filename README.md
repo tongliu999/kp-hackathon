@@ -226,3 +226,11 @@ only together and run the test suite to catch phrasing or normalization drift.
 payloads, persists the canonical runbook, and joins a later semantic match to
 the safety-gated executor. Its typed outcomes keep no-match, schema, storage,
 slot, confirmation, and execution failures distinct for the voice/UI layer.
+
+## M1 warm-path proof (TON-18)
+
+`M1WarmPath` joins the real store, slot dialogue, and executor with no cold
+component in the path. Tests use a recording booking adapter and a fake-only
+confirmation ID; they never perform a network request or booking. See
+[`docs/m1-live-proof.md`](docs/m1-live-proof.md) for the fail-closed live handoff
+and outstanding TON-11/TON-12 operational requirements.
