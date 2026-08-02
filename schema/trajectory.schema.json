@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kp-hackathon/schema/trajectory.schema.json",
+  "title": "Trajectory",
+  "description": "What one branch did while attempting an unknown task. Emitted by the branching search (TON-13), consumed by the pairwise judge (TON-19) and the distiller (TON-21). Hand-rolled because sail.Voyage is write-only and cannot be exported - see sail-notes.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["branch_id", "angle", "task", "steps", "success_signal", "wall_ms"],
+  "properties": {
+    "branch_id": {
+      "type": "string",
+      "description": "Unique within a fan-out, e.g. b0/b1/b2."
+    },
+    "angle": {
+      "type": "string",
+      "description": "The distinct approach this branch was told to take. Branches given identical prompts produce identical trajectories and the judge has nothing to compare - so this must actually differ."
+    },
+    "task": {
+      "type": "string",
+      "description": "The original request, verbatim. The distiller needs it to know what to generalize toward."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Everything the branch tried, INCLUDING dead ends. The judge reads failures as signal; the distiller strips them. Recording only what worked destroys both.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["i", "t", "action", "outcome"],
+        "properties": {
+          "i": { "type": "integer", "minimum": 0, "description": "Ordinal." },
+          "t": { "type": "number", "minimum": 0, "description": "Seconds since branch start." },
+          "kind": { "enum": ["shell", "browser", "think"] },
+          "action": {
+            "type": "string",
+            "description": "What was done: a shell command, a browser op, or a reasoning step."
+          },
+          "args": { "type": "object", "description": "Parameters, e.g. {selector, value, url}." },
+          "url": { "type": "string" },
+          "observation_excerpt": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "What came back, truncated. Full page dumps blow out the judge's context for no gain."
+          },
+          "outcome": {
+            "enum": ["ok", "error", "abandoned"],
+            "description": "abandoned = tried, didn't fail outright, but the branch moved on. This is what marks a dead end for the distiller."
+          },
+          "note": { "type": "string", "description": "Optional: why this was tried or dropped." }
+        }
+      }
+    },
+    "final_answer": {
+      "type": "string",
+      "description": "What the branch concluded. May be absent if it failed."
+    },
+    "success_signal": {
+      "type": "boolean",
+      "description": "Did the branch believe it completed the task? Self-reported and NOT trusted as ground truth - the judge exists precisely because this is unreliable."
+    },
+    "wall_ms": { "type": "integer", "minimum": 0 },
+    "error": {
+      "type": "string",
+      "description": "Present when the branch died rather than finished."
+    }
+  }
+}

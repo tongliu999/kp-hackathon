@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kp-hackathon/schema/runbook.schema.json",
+  "title": "Runbook",
+  "description": "A cached, replayable procedure. Produced by hand (M1) or distilled from a winning trajectory (M3), and executed by the runbook executor (TON-10). This file is the contract between Track A and Track B - locked at H+1, not renegotiated mid-build.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "description", "slots", "steps"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Stable identifier. Synthesized runbooks append a short suffix to avoid collisions."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "source": {
+      "enum": ["handwritten", "synthesized"],
+      "default": "handwritten",
+      "description": "Where this came from. The executor MUST NOT branch on this - if it needs to, TON-21 emitted something wrong."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "description": "What this runbook does, in one sentence. This is what the semantic matcher (TON-15) searches against, so it must describe the TASK, not the implementation."
+    },
+    "utterance_examples": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Phrasings that should match this runbook. Helps the matcher and doubles as the rehearsal script's source of truth."
+    },
+    "slots": {
+      "type": "array",
+      "description": "Values the caller must supply. The dialogue layer (TON-9) asks for missing ones in declaration order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "prompt"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z_][a-z0-9_]*$",
+            "description": "Referenced in step templates as {{name}}."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Spoken aloud when this slot is unfilled. Write it as a question a person would actually ask."
+          },
+          "example": { "type": "string" },
+          "required": { "type": "boolean", "default": true }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Executed in order. Stop on first failure - no retries, no recovery.",
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "description"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+        "kind": {
+          "enum": ["shell", "browser"],
+          "description": "shell runs in the Sailbox; browser drives the persistent profile inside it."
+        },
+        "description": {
+          "type": "string",
+          "description": "One line, plain language. Logged, and read aloud on failure."
+        },
+        "irreversible": {
+          "type": "boolean",
+          "default": false,
+          "description": "INVARIANT 1. True for anything with an out-of-box side effect: bookings, charges, sent messages. The executor MUST route these through the spoken confirm gate, and branches MUST NOT run them."
+        },
+        "confirm": {
+          "type": "string",
+          "description": "Spoken readback before an irreversible step. Required when irreversible is true. Must name the specifics (what, when, how much) - 'shall I proceed?' is not acceptable. Supports {{slot}} and {{capture}} templating."
+        },
+        "capture": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]*$",
+          "description": "Store this step's output under this name, usable as {{name}} in later steps. This is how a price read from the page reaches the confirm line."
+        },
+        "command": {
+          "type": "string",
+          "description": "shell only. Runs via /bin/sh -lc. Supports {{...}} templating."
+        },
+        "op": {
+          "enum": ["goto", "click", "fill", "read", "submit", "wait_for"],
+          "description": "browser only."
+        },
+        "url": { "type": "string" },
+        "selector": { "type": "string" },
+        "value": {
+          "type": "string",
+          "description": "browser fill only. Supports {{...}} templating."
+        },
+        "expect": {
+          "type": "string",
+          "description": "Optional success assertion. For browser steps, a selector that must be present after the op. Absence means the step failed."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "irreversible": { "const": true } }, "required": ["irreversible"] },
+          "then": {
+            "required": ["confirm"],
+            "$comment": "An irreversible step without a spoken readback is how you book four cars."
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "shell" } } },
+          "then": { "required": ["command"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "browser" } } },
+          "then": { "required": ["op"] }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "browser" }, "op": { "const": "goto" } },
+            "required": ["op"]
+          },
+          "then": { "required": ["url"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "browser" },
+              "op": { "enum": ["click", "fill", "read", "wait_for"] }
+            },
+            "required": ["op"]
+          },
+          "then": { "required": ["selector"] }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "browser" }, "op": { "const": "fill" } },
+            "required": ["op"]
+          },
+          "then": { "required": ["value"] }
+        }
+      ]
+    }
+  }
+}
