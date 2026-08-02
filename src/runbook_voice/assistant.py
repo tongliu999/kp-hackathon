@@ -111,10 +111,28 @@ class LearningWorker:
         self.last_seconds = time.perf_counter() - (self.answer_clock or started)
         return (
             f"I worked out how to do that — tried {len(trajectories)} approaches and kept "
-            f"{winner['branch_id']} because {why[:120].rstrip('.')}. "
+            f"{winner['branch_id']} because {_clip(why)} "
             f"I've saved it as a skill, so ask me again and it'll be instant. "
             f"[answer took {self.last_seconds:.1f}s]"
         )
+
+
+def _clip(text: str, limit: int = 160) -> str:
+    """Trim the judge's reason to a sentence, never mid-word.
+
+    This line is read aloud and projected. A hard character slice produced
+    "...availability for exactl.", which reads as a crash rather than a summary.
+    """
+    text = " ".join(text.split()).rstrip(".")
+    if len(text) <= limit:
+        return text + "."
+    head = text[:limit]
+    # Prefer ending on a clause, then a word; only then give up and hard-cut.
+    for boundary in (", ", " "):
+        cut = head.rfind(boundary)
+        if cut > limit // 2:
+            return head[:cut].rstrip(",") + "…"
+    return head + "…"
 
 
 def _pick_winner(trajectories: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
