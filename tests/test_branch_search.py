@@ -269,7 +269,11 @@ def test_fanout_branches_from_the_checkpoint_id(fake_sail) -> None:
     # one raises AttributeError - so a regression here fails on the fake too.
     assert sail.from_checkpoint_ids == ["ckpt-sb-base"] * 3
     assert not hasattr(FakeCheckpoint("x"), "id")
-    assert sail.child_names == ["branch-0", "branch-1", "branch-2"]
+    # Creation is intentionally concurrent, so the SDK call log records
+    # completion order rather than input order. The contract is one child for
+    # every requested name; ThreadPoolExecutor.map separately preserves the
+    # returned children sequence.
+    assert sorted(sail.child_names) == ["branch-0", "branch-1", "branch-2"]
     assert len({child.sailbox_id for child in children}) == 3
 
 
