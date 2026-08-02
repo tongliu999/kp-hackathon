@@ -1,6 +1,16 @@
 """Runbook Voice Assistant core package."""
 
 from .audio import AudioClip
+from .branch_search import (
+    DEFAULT_ANGLES,
+    Angle,
+    BranchingSearch,
+    BranchLauncher,
+    InBoxAgentLauncher,
+    Step,
+    Trajectory,
+    checkpoint_fanout,
+)
 from .cold_tasks import ColdTaskCoordinator, JobSnapshot, JobStatus
 from .dialogue import (
     AsyncDialogueInput,
@@ -78,14 +88,18 @@ from .warm_replay import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "Angle",
     "AudioClip",
     "AsyncDialogueInput",
     "BoxHandle",
     "AsyncDialogueOutput",
     "AsyncSlotFillingDialogue",
+    "BranchLauncher",
+    "BranchingSearch",
     "ColdTaskCoordinator",
     "ConfirmationGate",
     "ConfirmationRequest",
+    "DEFAULT_ANGLES",
     "DeterministicSemanticMatcher",
     "DialogueInput",
     "DialogueOutcome",
@@ -95,6 +109,7 @@ __all__ = [
     "ExecutionResult",
     "ExecutionStatus",
     "ExactYesConfirmationGate",
+    "InBoxAgentLauncher",
     "JSONRunbookStore",
     "JobSnapshot",
     "JobStatus",
@@ -122,6 +137,8 @@ __all__ = [
     "SlotResolutionError",
     "SlotRule",
     "SlotType",
+    "Step",
+    "Trajectory",
     "SynthesisOutcome",
     "SynthesisStatus",
     "StepResult",
@@ -139,6 +156,7 @@ __all__ = [
     "__version__",
     "ReplayExecutor",
     "boot",
+    "checkpoint_fanout",
     "confirmation_text",
     "connect",
     "distill",
