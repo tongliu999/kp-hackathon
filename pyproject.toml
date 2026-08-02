@@ -20,14 +20,17 @@ sailbox = [
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
-  # schema/validate.py and the trajectory tests both check emitted JSON against
-  # the locked schemas rather than eyeballing them.
-  "jsonschema>=4.0",
+  # Developers exercise the live voice loop, so dev installs include the
+  # microphone/speaker adapter as well as the test tooling.
+  "sounddevice>=0.5,<1",
+  # schema/validate.py has always imported this; it was in no dependency list.
+  "jsonschema>=4",
 ]
 
 [project.scripts]
 runbook-branch-search-demo = "runbook_voice.branch_search_demo:main"
 runbook-cold-task-demo = "runbook_voice.cold_task_demo:main"
+runbook-distill = "runbook_voice.distiller:main"
 runbook-sailbox-demo = "runbook_voice.sailbox_demo:main"
 runbook-voice-echo = "runbook_voice.voice_loop:main"
 
