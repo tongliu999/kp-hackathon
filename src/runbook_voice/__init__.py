@@ -1,7 +1,6 @@
 """Runbook Voice Assistant core package."""
 
 from .audio import AudioClip
-from .voice import LatencyReport, VoiceEchoLoop
 from .executor import (
     ConfirmationGate,
     ConfirmationRequest,
@@ -12,6 +11,16 @@ from .executor import (
     StepResult,
     StepStatus,
 )
+from .runbook_store import (
+    DeterministicSemanticMatcher,
+    JSONRunbookStore,
+    RunbookMatcher,
+    RunbookSerializable,
+    RunbookStore,
+    RunbookStoreCorruptionError,
+    RunbookStoreError,
+    RunbookValidationError,
+)
 from .runbooks import (
     Runbook,
     RunbookSchemaError,
@@ -21,6 +30,7 @@ from .runbooks import (
     SlotType,
     substitute_slots,
 )
+from .voice import LatencyReport, VoiceEchoLoop
 
 __version__ = "0.1.0"
 
@@ -28,14 +38,22 @@ __all__ = [
     "AudioClip",
     "ConfirmationGate",
     "ConfirmationRequest",
+    "DeterministicSemanticMatcher",
     "ExecutionResult",
     "ExecutionStatus",
+    "JSONRunbookStore",
     "LatencyReport",
     "PersistentSailboxRunner",
     "Runbook",
     "RunbookExecutor",
+    "RunbookMatcher",
     "RunbookSchemaError",
+    "RunbookSerializable",
     "RunbookStep",
+    "RunbookStore",
+    "RunbookStoreCorruptionError",
+    "RunbookStoreError",
+    "RunbookValidationError",
     "SlotDefinition",
     "SlotResolutionError",
     "SlotType",

@@ -91,7 +91,6 @@ arguments are data, so the executor does not contain demo-specific ordering:
   ]
 }
 ```
-
 Supported slot types are `string`, `integer`, `number`, `boolean`, `object`,
 and `array`. A full expression such as `"{{party_size}}"` preserves its value's
 type; expressions embedded in text are stringified. Substitution recurses into
@@ -107,3 +106,44 @@ An irreversible step is handed to the configured `ConfirmationGate` immediately
 before dispatch. Only a literal `True` permits execution. Rejection, a missing
 gate, or a gate error stops the runbook without calling the irreversible action.
 The executor deliberately provides no retry behavior.
+
+## Runbook storage
+
+`JSONRunbookStore` provides the warm-path persistence seam. It accepts either
+the M0 `Runbook` object or its `to_dict()` result, stores the resulting JSON
+unchanged in one file, uses a process-safe sidecar lock and atomic replacement,
+and returns `None` when no stored intent matches:
+
+```python
+from runbook_voice import RunbookStore
+
+store = RunbookStore("var/runbooks.json")
+store.save(runbook)
+
+matched = store.lookup("Could you arrange that dinner booking again?")
+if matched is None:
+    # Start branching/cold-path search.
+    ...
+```
+
+The built-in matcher is deterministic and offline. An LLM or embedding matcher
+can be injected by implementing `RunbookMatcher.match(utterance, runbooks)`.
+Malformed JSON, incompatible store versions, and invalid records raise
+`RunbookStoreCorruptionError`; corrupted data is never silently treated as a
+cache miss or overwritten by `save`.
+
+```json
+{
+  "format_version": 1,
+  "runbooks": [
+    {
+      "id": "restaurant-reservation",
+      "name": "Reserve a restaurant table",
+      "version": "1.0",
+      "description": "Book a table for dinner at a restaurant",
+      "slots": [],
+      "steps": []
+    }
+  ]
+}
+```
