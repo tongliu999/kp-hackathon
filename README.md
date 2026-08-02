@@ -188,3 +188,10 @@ language, failure pivots, and rehearsal checklist live in
 [`docs/demo-run-of-show.md`](docs/demo-run-of-show.md). The machine-readable
 request fixture is [`demo/demo_config.json`](demo/demo_config.json); edit both
 only together and run the test suite to catch phrasing or normalization drift.
+
+## Warm replay
+
+[`WarmReplayJoin`](docs/warm-replay.md) validates untrusted synthesized M0
+payloads, persists the canonical runbook, and joins a later semantic match to
+the safety-gated executor. Its typed outcomes keep no-match, schema, storage,
+slot, confirmation, and execution failures distinct for the voice/UI layer.
