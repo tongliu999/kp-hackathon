@@ -180,8 +180,16 @@ const pw = (await box.fs.read("/root/.vnc_password_plain")).toString().trim();
 
 const listeners = await box.listeners();
 if (!listeners.some((l) => l.port === VNC_PORT)) await box.expose(VNC_PORT);
-if (!listeners.some((l) => l.port === CDP_PROXY_PORT)) {
+// Always refresh the allowlist rather than skipping when a listener exists.
+// The caller's public IP changes -- laptop moves network, DHCP lease renews,
+// conference wifi -- and a stale allowlist fails as a connection RESET at key
+// exchange, which reads as the box being down rather than as a firewall drop.
+// Observed live: 108.224.93.145 -> 209.29.168.32 mid-session.
+{
   const ip = await callerIp();
+  if (listeners.some((l) => l.port === CDP_PROXY_PORT)) {
+    await box.unexpose(CDP_PROXY_PORT).catch(() => {});
+  }
   await box.expose(CDP_PROXY_PORT, { protocol: "tcp", allowlist: [`${ip}/32`] });
   console.log(`CDP tunnel allowlisted to ${ip}/32`);
 }
