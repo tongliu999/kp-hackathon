@@ -256,8 +256,9 @@ submit a prompt to the adaptive parent workflow. The parent chooses how many rea
 Sailboxes the task needs (2–8, never blindly targeting the maximum), assigns a
 materially different approach to each, judges the complete trajectories, distills
 the winner, validates the result, and updates `demo/runbook-store.json`. The manual
-judge and distill controls remain available for inspection or reruns, alongside demo
-preflight, artifact validation, and the test suite.
+judge and distill controls remain available for inspection or reruns, alongside
+output and authentication management. Development checks remain available from the
+command line, but are intentionally not exposed as console actions.
 
 The console exposes only that fixed action allowlist—there is no arbitrary shell
 input. Only one workflow runs at a time, live output stays visible, and Stop

@@ -218,9 +218,6 @@ function taskCommand(task, input) {
       args: ["-m", "runbook_voice.judge_check", "--runs", "1", "--fixtures", record.directory],
     };
   }
-  if (task === "validate") {
-    return { label: "Validate runbooks and trajectories", command: "python", args: ["schema/validate.py"] };
-  }
   if (task === "distill") {
     const record = selectedHistory(input);
     const branchId = String(input?.branchId ?? "");
@@ -242,18 +239,8 @@ function taskCommand(task, input) {
       ],
     };
   }
-  if (task === "demo-check") {
-    return {
-      label: "Demo preflight",
-      command: "python",
-      args: ["-m", "runbook_voice.demo", "check"],
-    };
-  }
   if (task === "rehearse") {
     return { label: "Run 3 safe booking rehearsals", command: "node", args: ["scripts/rehearse.mjs"] };
-  }
-  if (task === "tests") {
-    return { label: "Run project test suite", command: "npm", args: ["test"] };
   }
   throw new Error(`unknown task: ${task}`);
 }
@@ -529,5 +516,5 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-  console.log(`Agent version history: http://127.0.0.1:${port}`);
+  console.log(`Branch: http://127.0.0.1:${port}`);
 });

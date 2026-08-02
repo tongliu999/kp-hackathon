@@ -16,6 +16,9 @@ test("UI is a run console with prompt, graph, output, and inspector surfaces", (
   assert.match(html, /aria-label="Selected prompt branch graph"/);
   assert.match(html, /aria-labelledby="inspector-title"/);
   assert.match(html, /Local runtime/);
+  assert.match(html, /<title>Branch<\/title>/);
+  assert.match(html, />Branch<\/span>/);
+  assert.doesNotMatch(html, /Branchbook/);
   assert.match(html, /data-task="fanout"/);
   assert.match(html, /data-task="judge"/);
   assert.match(html, /id="run-output"/);
@@ -61,8 +64,12 @@ test("fan-out prompts appear live in history before trajectories finish", () => 
 });
 
 test("console server uses a fixed task allowlist without a shell", () => {
-  for (const task of ["fanout", "judge", "distill", "validate", "demo-check", "rehearse", "tests"]) {
+  for (const task of ["fanout", "judge", "distill", "rehearse"]) {
     assert.ok(server.includes(`task === "${task}"`), task);
+  }
+  for (const task of ["validate", "demo-check", "tests"]) {
+    assert.ok(!server.includes(`task === "${task}"`), task);
+    assert.ok(!html.includes(`data-task="${task}"`), task);
   }
   assert.match(server, /shell: false/);
   assert.match(server, /already running/);
@@ -70,7 +77,6 @@ test("console server uses a fixed task allowlist without a shell", () => {
   assert.match(server, /\/api\/history/);
   assert.ok(server.includes("/^b\\d+\\.json$/"));
   assert.ok(server.includes('"runbook_voice.distiller"'));
-  assert.ok(server.includes('"runbook_voice.demo"'));
 });
 
 test("console includes a no-terminal authentication workspace", () => {

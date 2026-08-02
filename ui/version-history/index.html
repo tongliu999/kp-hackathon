@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0d0f0f" />
-    <title>Branchbook — Agent version history</title>
+    <title>Branch</title>
     <meta name="description" content="Inspect every branch, action, artifact, conversation, dollar, metric, and lesson in an agent exploration." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,9 +14,9 @@
   <body>
     <div class="app-shell">
       <header class="app-header">
-        <a class="brand" href="#" aria-label="Branchbook console home">
+        <a class="brand" href="#" aria-label="Branch console home">
           <span class="brand-mark" aria-hidden="true">B</span>
-          <span>Branchbook</span>
+          <span>Branch</span>
         </a>
         <div class="header-context">
           <span>runbook-voice</span><b>/</b>
@@ -38,11 +38,6 @@
         </div>
         <label class="run-search"><span aria-hidden="true">⌕</span><input id="run-search" type="search" placeholder="Filter prompts" /></label>
         <div id="run-list" class="run-list" aria-live="polite"></div>
-        <div class="sidebar-footer">
-          <button class="utility-button" type="button" data-task="validate">✓ Validate artifacts</button>
-          <button class="utility-button" type="button" data-task="demo-check">◉ Demo preflight</button>
-          <button class="utility-button" type="button" data-task="tests">⌁ Run test suite</button>
-        </div>
       </aside>
 
       <aside id="auth-sidebar" class="run-sidebar auth-sidebar hidden" aria-label="Authentication providers">
