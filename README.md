@@ -264,6 +264,16 @@ judge and distill controls remain available for inspection or reruns, alongside
 output and authentication management. Development checks remain available from the
 command line, but are intentionally not exposed as console actions.
 
+Choose **Agents** to browse every validated completed runbook discovered in the
+learned store and distilled artifacts. Each card shows its inputs, ordered actions,
+source, full JSON, and learned do/avoid guidance. The input form replays that saved
+runbook through the existing safety-gated executor in local stub mode, so it creates
+no new branches and contacts no booking provider. Irreversible steps still require
+an explicit confirmation. Submitting a new prompt is warm-path-first: the server
+uses the same deterministic semantic matcher as voice replay and, when a completed
+agent matches, opens that agent instead of launching a Sail search. Only a genuine
+miss reaches the adaptive cold path.
+
 The console exposes only that fixed action allowlist—there is no arbitrary shell
 input. Only one workflow runs at a time, live output stays visible, and Stop
 sends an interrupt so Sailbox cleanup can run. Branch traces explicitly show

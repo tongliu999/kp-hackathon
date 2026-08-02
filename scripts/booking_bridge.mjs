@@ -272,6 +272,14 @@ async function handle(request) {
       return { candidates: results.length, query: params.restaurant, provider };
     }
 
+    case "restaurant.select": {
+      const rank = Number(args.rank ?? 1);
+      if (!Number.isInteger(rank) || rank < 1) {
+        throw new Error("restaurant.select rank must be a positive integer");
+      }
+      return { selected_rank: rank, requested_time: args.time ?? null };
+    }
+
     case "restaurant.book": {
       const params = toBookingParams(args);
       const provider = resolveProvider(args);

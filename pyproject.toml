@@ -42,6 +42,7 @@ dev = [
 runbook-demo = "runbook_voice.demo:main"
 runbook-branch-search-demo = "runbook_voice.branch_search_demo:main"
 runbook-cold-task-demo = "runbook_voice.cold_task_demo:main"
+runbook-completed-agents = "runbook_voice.completed_agents:main"
 runbook-distill = "runbook_voice.distiller:main"
 runbook-judge-check = "runbook_voice.judge_check:main"
 runbook-sailbox-demo = "runbook_voice.sailbox_demo:main"

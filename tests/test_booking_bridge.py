@@ -34,6 +34,14 @@ async def test_search_reaches_the_javascript_modules(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_distilled_select_step_replays_without_a_new_agent(tmp_path):
+    result = await runner(tmp_path).execute(
+        "restaurant.select", {"rank": 1, "time": "7 pm"}
+    )
+    assert result == {"selected_rank": 1, "requested_time": "7 pm"}
+
+
+@pytest.mark.asyncio
 async def test_book_is_refused_without_upstream_confirmation(tmp_path):
     """The default runner cannot book. Nothing about it is configurable by accident."""
     with pytest.raises(BookingBridgeError, match="irreversible"):

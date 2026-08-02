@@ -108,6 +108,16 @@ def test_m0_runbook_contract_round_trips_unchanged(tmp_path: Path) -> None:
     assert store.lookup("reserve a restaurant table") == RESTAURANT_RUNBOOK
 
 
+def test_list_returns_isolated_completed_runbooks(tmp_path: Path) -> None:
+    store = JSONRunbookStore(tmp_path / "runbooks.json")
+    store.save(RESTAURANT_RUNBOOK)
+
+    listed = store.list()
+    listed[0]["name"] = "mutated outside the store"
+
+    assert store.list() == [RESTAURANT_RUNBOOK]
+
+
 @dataclass
 class _CanonicalRunbook:
     document: Runbook

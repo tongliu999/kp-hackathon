@@ -74,7 +74,7 @@ test("fan-out prompts appear live in history before trajectories finish", () => 
 });
 
 test("console server uses a fixed task allowlist without a shell", () => {
-  for (const task of ["fanout", "judge", "distill", "rehearse"]) {
+  for (const task of ["fanout", "replay", "judge", "distill", "rehearse"]) {
     assert.ok(server.includes(`task === "${task}"`), task);
   }
   for (const task of ["validate", "demo-check", "tests"]) {
@@ -87,6 +87,25 @@ test("console server uses a fixed task allowlist without a shell", () => {
   assert.match(server, /\/api\/history/);
   assert.ok(server.includes("/^b\\d+\\.json$/"));
   assert.ok(server.includes('"runbook_voice.distiller"'));
+});
+
+test("console exposes completed agents and routes matching prompts to warm replay", () => {
+  for (const id of [
+    "show-agents", "agents-sidebar", "agent-list", "agents-workspace",
+    "agent-detail", "agent-output",
+  ]) {
+    assert.ok(html.includes(`id="${id}"`), id);
+  }
+  assert.match(html, /Completed agents/);
+  assert.match(app, /USE WITHOUT RE-BRANCHING/);
+  assert.match(app, /\/api\/agents/);
+  assert.match(app, /agent_match/);
+  assert.match(app, /Use completed agent/);
+  assert.match(app, /startAgentReplay/);
+  assert.match(server, /\/api\/agents\/match/);
+  assert.match(server, /completed_agents/);
+  assert.match(server, /no branch search was launched/);
+  assert.match(server, /input\.task === "fanout"/);
 });
 
 test("console includes a no-terminal authentication workspace", () => {

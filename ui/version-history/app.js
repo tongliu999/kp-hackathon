@@ -6,11 +6,17 @@ const runLabel = document.querySelector("#run-label");
 const consoleState = document.querySelector("#console-state");
 const stopButton = document.querySelector("#stop-run");
 const outputDrawer = document.querySelector("#output-drawer");
+const agentOutput = document.querySelector("#agent-output");
+const agentRunLabel = document.querySelector("#agent-run-label");
+const agentStopButton = document.querySelector("#agent-stop-run");
 
 let histories = [];
+let completedAgents = [];
 let selectedRun = null;
 let selectedBranch = null;
+let selectedAgent = null;
 let activeRunId = null;
+let activeRunTask = null;
 let pollTimer = null;
 let lastFanoutPrompt = null;
 
@@ -109,7 +115,11 @@ function setConsoleState(status, label) {
   document.querySelectorAll("[data-task]").forEach((button) => {
     button.disabled = busy;
   });
+  document.querySelectorAll("[data-busy-control]").forEach((button) => {
+    button.disabled = busy;
+  });
   stopButton.disabled = !busy;
+  agentStopButton.disabled = !busy;
 }
 
 function showOutput() {
@@ -521,9 +531,12 @@ async function pollRun() {
     const response = await fetch(`/api/runs/${activeRunId}`);
     const run = await response.json();
     if (!response.ok) throw new Error(run.error ?? "Could not read workflow status");
-    runLabel.textContent = run.label;
-    runOutput.textContent = run.output;
-    runOutput.scrollTop = runOutput.scrollHeight;
+    const replaying = activeRunTask === "replay" || run.task === "replay";
+    const output = replaying ? agentOutput : runOutput;
+    if (replaying) agentRunLabel.textContent = run.label;
+    else runLabel.textContent = run.label;
+    output.textContent = run.output;
+    output.scrollTop = output.scrollHeight;
     upsertWorkflowHistory(run);
     if (run.status === "running" || run.status === "stopping") {
       setConsoleState(run.status, run.status === "stopping" ? "Stopping safely" : "Running");
@@ -531,12 +544,14 @@ async function pollRun() {
     } else {
       setConsoleState(run.status, run.status === "succeeded" ? "Completed" : run.status);
       activeRunId = null;
+      activeRunTask = null;
       pollTimer = null;
-      await loadHistory({ preferPrompt: lastFanoutPrompt });
+      if (!replaying) await loadHistory({ preferPrompt: lastFanoutPrompt });
       lastFanoutPrompt = null;
     }
   } catch (error) {
-    runOutput.textContent += `\n[console] ${error.message}\n`;
+    const output = activeRunTask === "replay" ? agentOutput : runOutput;
+    output.textContent += `\n[console] ${error.message}\n`;
     setConsoleState("failed", "Connection error");
     activeRunId = null;
   }
@@ -569,7 +584,19 @@ async function startTask(task) {
     });
     const run = await response.json();
     if (!response.ok) throw new Error(run.error ?? "Could not start workflow");
+    if (run.kind === "agent_match") {
+      if (!completedAgents.some((agent) => agent.id === run.agent.id)) completedAgents.push(run.agent);
+      selectAgent(completedAgents.find((agent) => agent.id === run.agent.id) ?? run.agent, {
+        matchMessage: run.message,
+      });
+      switchWorkspace("agents");
+      agentOutput.textContent = `[warm path] ${run.message}\nFill the saved runbook inputs, then choose Use completed agent.`;
+      setConsoleState("succeeded", "Saved agent matched");
+      lastFanoutPrompt = null;
+      return;
+    }
     activeRunId = run.id;
+    activeRunTask = task;
     runLabel.textContent = run.label;
     runOutput.textContent = run.output;
     upsertWorkflowHistory(run, { select: task === "fanout" });
@@ -578,6 +605,7 @@ async function startTask(task) {
     runOutput.textContent = `[console] ${error.message}`;
     setConsoleState("failed", "Could not start");
     activeRunId = null;
+    activeRunTask = null;
   }
 }
 
@@ -594,14 +622,23 @@ stopButton.addEventListener("click", async () => {
   window.clearTimeout(pollTimer);
   await pollRun();
 });
+agentStopButton.addEventListener("click", async () => {
+  if (!activeRunId) return;
+  agentStopButton.disabled = true;
+  await fetch(`/api/runs/${activeRunId}/cancel`, { method: "POST" });
+  window.clearTimeout(pollTimer);
+  await pollRun();
+});
 
 loadHistory().catch((error) => {
   branchCanvas.replaceChildren(element("div", "canvas-empty error", error.message));
 });
 
 const runSidebar = document.querySelector("#run-sidebar");
+const agentsSidebar = document.querySelector("#agents-sidebar");
 const authSidebar = document.querySelector("#auth-sidebar");
 const runsWorkspace = document.querySelector("#runs-workspace");
+const agentsWorkspace = document.querySelector("#agents-workspace");
 const authWorkspace = document.querySelector("#auth-workspace");
 const authAccounts = document.querySelector("#auth-accounts");
 const authGrants = document.querySelector("#auth-grants");
@@ -611,18 +648,223 @@ let authentication = { providers: [], accounts: [], grants: [], audit: [] };
 
 function switchWorkspace(name) {
   const auth = name === "auth";
-  runSidebar.classList.toggle("hidden", auth);
-  runsWorkspace.classList.toggle("hidden", auth);
-  inspector.classList.toggle("hidden", auth);
+  const agents = name === "agents";
+  const runs = !auth && !agents;
+  runSidebar.classList.toggle("hidden", !runs);
+  runsWorkspace.classList.toggle("hidden", !runs);
+  inspector.classList.toggle("hidden", !runs);
+  agentsSidebar.classList.toggle("hidden", !agents);
+  agentsWorkspace.classList.toggle("hidden", !agents);
   authSidebar.classList.toggle("hidden", !auth);
   authWorkspace.classList.toggle("hidden", !auth);
-  document.querySelector("#show-runs").classList.toggle("active", !auth);
+  document.querySelector("#show-runs").classList.toggle("active", runs);
+  document.querySelector("#show-agents").classList.toggle("active", agents);
   document.querySelector("#show-auth").classList.toggle("active", auth);
   const url = new URL(window.location.href);
-  if (auth) url.searchParams.set("workspace", "auth");
+  if (!runs) url.searchParams.set("workspace", name);
   else url.searchParams.delete("workspace");
   window.history.replaceState({}, "", url);
   if (auth) loadAuth();
+  if (agents) loadAgents();
+}
+
+async function loadAgents() {
+  const detail = document.querySelector("#agent-detail");
+  try {
+    const response = await fetch("/api/agents");
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Could not load completed agents");
+    completedAgents = payload.agents ?? [];
+    document.querySelector("#agent-count").textContent = String(completedAgents.length);
+    renderAgentList();
+    const current = completedAgents.find((agent) => agent.id === selectedAgent?.id);
+    if (current || (!selectedAgent && completedAgents[0])) selectAgent(current ?? completedAgents[0]);
+    if (!completedAgents.length) {
+      detail.replaceChildren(element("div", "agent-empty", "No completed runbooks yet. Finish a successful branch search to create the first reusable agent."));
+    }
+  } catch (error) {
+    detail.replaceChildren(element("div", "agent-empty error", error.message));
+  }
+}
+
+function renderAgentList() {
+  const list = document.querySelector("#agent-list");
+  const query = document.querySelector("#agent-search").value.trim().toLowerCase();
+  const visible = completedAgents.filter((agent) =>
+    `${agent.name} ${agent.description ?? ""} ${agent.id}`.toLowerCase().includes(query)
+  );
+  list.replaceChildren();
+  if (!visible.length) {
+    list.append(element("p", "run-list-empty", query ? "No matching completed agents." : "No completed agents yet."));
+    return;
+  }
+  for (const agent of visible) {
+    const button = element("button", "run-list-item agent-list-item");
+    button.type = "button";
+    button.classList.toggle("selected", selectedAgent?.id === agent.id);
+    const top = element("span", "run-list-top");
+    top.append(element("span", "run-source", agent.source), element("span", "run-status learned", "ready"));
+    const meta = element("span", "run-list-meta");
+    meta.append(element("span", "", `${agent.step_count} steps`), element("span", "", `v${agent.version}`));
+    button.append(top, element("strong", "", agent.name), meta);
+    button.addEventListener("click", () => selectAgent(agent, { matchMessage: "" }));
+    list.append(button);
+  }
+}
+
+function selectAgent(agent, { matchMessage = null } = {}) {
+  selectedAgent = agent;
+  renderAgentList();
+  if (matchMessage !== null) document.querySelector("#agent-match-message").textContent = matchMessage;
+  renderAgentDetail();
+}
+
+function agentInput(slot) {
+  const label = element("label", "agent-slot");
+  label.dataset.slot = slot.name;
+  label.dataset.type = slot.type;
+  const title = element("span", "", slot.name.replaceAll("_", " "));
+  title.append(element("small", "", slot.required ? "required" : "optional"));
+  let input;
+  if (slot.type === "boolean") {
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = slot.default === true;
+  } else if (slot.type === "object" || slot.type === "array") {
+    input = document.createElement("textarea");
+    input.rows = 3;
+    input.placeholder = slot.type === "array" ? "[]" : "{}";
+    if (slot.default !== undefined) input.value = JSON.stringify(slot.default, null, 2);
+  } else {
+    input = document.createElement("input");
+    input.type = slot.type === "integer" || slot.type === "number" ? "number" : "text";
+    if (slot.type === "number") input.step = "any";
+    input.placeholder = slot.prompt ?? slot.description ?? slot.name;
+    if (slot.default !== undefined) input.value = String(slot.default);
+  }
+  input.name = slot.name;
+  input.required = slot.required && slot.type !== "boolean";
+  label.append(title, input);
+  return label;
+}
+
+function renderAgentDetail() {
+  const detail = document.querySelector("#agent-detail");
+  detail.replaceChildren();
+  if (!selectedAgent) return;
+  const runbook = selectedAgent.runbook;
+  const overview = element("article", "agent-runbook-card");
+  const header = element("header", "agent-card-heading");
+  const title = element("div", "");
+  title.append(element("span", "section-kicker", "COMPLETED AGENT"), element("h2", "", selectedAgent.name));
+  header.append(title, element("span", "agent-ready-chip", "READY TO REUSE"));
+  overview.append(header, element("p", "agent-description", selectedAgent.description ?? "Validated reusable runbook."));
+  const facts = element("div", "agent-facts");
+  for (const [label, value] of [["Agent ID", selectedAgent.id], ["Source", selectedAgent.source], ["Origin", selectedAgent.origin], ["Completed", new Date(selectedAgent.completed_at).toLocaleString()]]) {
+    const fact = element("div", "");
+    fact.append(element("span", "", label), element("strong", "", value));
+    facts.append(fact);
+  }
+  overview.append(facts);
+
+  const steps = element("section", "agent-runbook-section");
+  steps.append(element("h3", "", "Completed runbook"));
+  runbook.steps.forEach((step, index) => {
+    const row = element("article", "agent-step");
+    row.append(element("span", "agent-step-index", String(index + 1).padStart(2, "0")));
+    const copy = element("div", "");
+    copy.append(element("strong", "", step.action), element("p", "", step.description ?? step.id));
+    row.append(copy, element("span", step.irreversible ? "agent-step-risk" : "agent-step-safe", step.irreversible ? "confirm" : "safe"));
+    steps.append(row);
+  });
+  overview.append(steps);
+  const guidance = runbook.guidance;
+  if (guidance?.do?.length || guidance?.avoid?.length) {
+    const guide = element("section", "agent-guidance");
+    guide.append(element("h3", "", "Learned guidance"));
+    const columns = element("div", "agent-guidance-grid");
+    for (const [label, items, className] of [["Do", guidance?.do ?? [], "do"], ["Avoid", guidance?.avoid ?? [], "avoid"]]) {
+      const column = element("div", className);
+      column.append(element("strong", "", label));
+      items.forEach((item) => column.append(element("p", "", `• ${item}`)));
+      columns.append(column);
+    }
+    guide.append(columns);
+    overview.append(guide);
+  }
+
+  const use = element("form", "agent-use-card");
+  use.id = "agent-use-form";
+  use.append(element("span", "section-kicker", "USE WITHOUT RE-BRANCHING"), element("h2", "", "Run saved agent"));
+  use.append(element("p", "agent-description", "These values go directly through the validated runbook. The console uses safe stub execution; irreversible steps still require explicit confirmation."));
+  const slots = element("div", "agent-slots");
+  runbook.slots.forEach((slot) => slots.append(agentInput(slot)));
+  if (!runbook.slots.length) slots.append(element("p", "agent-no-slots", "This agent has no runtime inputs."));
+  use.append(slots);
+  if (selectedAgent.has_irreversible_steps) {
+    const confirm = element("label", "agent-confirm");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.id = "agent-confirm";
+    confirm.append(checkbox, element("span", "", "Confirm the runbook’s irreversible step in safe stub mode"));
+    use.append(confirm);
+  }
+  const button = element("button", "agent-use-button", "Use completed agent →");
+  button.type = "submit";
+  button.dataset.busyControl = "true";
+  use.append(button);
+  use.addEventListener("submit", startAgentReplay);
+  const raw = element("details", "agent-raw");
+  raw.append(element("summary", "", "Runbook JSON"), element("pre", "", JSON.stringify(runbook, null, 2)));
+  use.append(raw);
+  detail.append(overview, use);
+}
+
+function readAgentSlots(form) {
+  const values = {};
+  for (const label of form.querySelectorAll(".agent-slot")) {
+    const input = label.querySelector("input, textarea");
+    const type = label.dataset.type;
+    if (type === "boolean") values[label.dataset.slot] = input.checked;
+    else if (!input.value.trim() && !input.required) continue;
+    else if (type === "integer") values[label.dataset.slot] = Number.parseInt(input.value, 10);
+    else if (type === "number") values[label.dataset.slot] = Number(input.value);
+    else if (type === "object" || type === "array") values[label.dataset.slot] = JSON.parse(input.value);
+    else values[label.dataset.slot] = input.value.trim();
+  }
+  return values;
+}
+
+async function startAgentReplay(event) {
+  event.preventDefault();
+  if (!selectedAgent) return;
+  setConsoleState("running", "Reusing agent");
+  agentOutput.textContent = "Starting saved runbook…";
+  try {
+    const body = {
+      task: "replay",
+      agentId: selectedAgent.id,
+      slots: readAgentSlots(event.currentTarget),
+      confirmed: document.querySelector("#agent-confirm")?.checked === true,
+    };
+    const response = await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const run = await response.json();
+    if (!response.ok) throw new Error(run.error ?? "Could not reuse completed agent");
+    activeRunId = run.id;
+    activeRunTask = "replay";
+    agentRunLabel.textContent = run.label;
+    agentOutput.textContent = run.output;
+    await pollRun();
+  } catch (error) {
+    agentOutput.textContent = `[warm path] ${error.message}`;
+    setConsoleState("failed", "Replay failed");
+    activeRunId = null;
+    activeRunTask = null;
+  }
 }
 
 async function authRequest(path, options = {}) {
@@ -848,6 +1090,8 @@ function renderAuth() {
 
 document.querySelectorAll("[data-workspace]").forEach((button) => button.addEventListener("click", () => switchWorkspace(button.dataset.workspace)));
 document.querySelector("#refresh-auth").addEventListener("click", loadAuth);
+document.querySelector("#refresh-agents").addEventListener("click", loadAgents);
+document.querySelector("#agent-search").addEventListener("input", renderAgentList);
 document.querySelector("#grant-account").addEventListener("change", (event) => {
   const account = authentication.accounts.find((item) => item.id === event.target.value);
   if (!account) return;
@@ -879,5 +1123,6 @@ document.querySelector("#grant-form").addEventListener("submit", async (event) =
 
 const initialParams = new URLSearchParams(window.location.search);
 if (initialParams.get("workspace") === "auth") switchWorkspace("auth");
+if (initialParams.get("workspace") === "agents") switchWorkspace("agents");
 if (initialParams.get("auth_error")) setAuthMessage(initialParams.get("auth_error"), "error");
 if (initialParams.get("connected")) setAuthMessage("Account connected successfully.", "success");

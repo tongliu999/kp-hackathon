@@ -22,6 +22,7 @@
           <span>runbook-voice</span><b>/</b>
           <nav class="workspace-tabs" aria-label="Console workspaces">
             <button id="show-runs" class="active" type="button" data-workspace="runs">Runs</button>
+            <button id="show-agents" type="button" data-workspace="agents">Agents</button>
             <button id="show-auth" type="button" data-workspace="auth">Auth</button>
           </nav>
         </div>
@@ -49,6 +50,19 @@
         <div class="sidebar-footer auth-guardrail">
           <strong>Opaque handles only</strong>
           <p>Agents never receive raw tokens or cookies. Every use is scoped to a run, branch, domain, action, and expiry.</p>
+        </div>
+      </aside>
+
+      <aside id="agents-sidebar" class="run-sidebar agents-sidebar hidden" aria-label="Completed agents">
+        <div class="sidebar-heading">
+          <div><span class="section-kicker">COMPLETED AGENTS</span><strong id="agent-count">0</strong></div>
+          <button id="refresh-agents" class="square-button" type="button" aria-label="Refresh completed agents">↻</button>
+        </div>
+        <label class="run-search"><span aria-hidden="true">⌕</span><input id="agent-search" type="search" placeholder="Filter agents" /></label>
+        <div id="agent-list" class="run-list agent-list" aria-live="polite"></div>
+        <div class="sidebar-footer agent-reuse-note">
+          <strong>Warm path</strong>
+          <p>A matching prompt opens its completed agent immediately. Branch search only runs when no saved runbook matches.</p>
         </div>
       </aside>
 
@@ -93,6 +107,29 @@
       <aside id="inspector" class="trace-inspector" aria-labelledby="inspector-title">
         <div class="inspector-empty">Select a branch node to inspect its trace.</div>
       </aside>
+
+      <main id="agents-workspace" class="agents-main hidden" aria-label="Completed agent library">
+        <header class="agents-heading">
+          <div>
+            <span class="section-kicker">REUSABLE RUNBOOK LIBRARY</span>
+            <h1>Completed agents</h1>
+            <p>Inspect a learned runbook, supply its inputs, and replay it without another fan-out.</p>
+          </div>
+          <div class="warm-path-badge"><span>0</span> new branches</div>
+        </header>
+        <div id="agent-match-message" class="agent-match-message" role="status" aria-live="polite"></div>
+        <section id="agent-detail" class="agent-detail">
+          <div class="agent-empty">Loading completed agents…</div>
+        </section>
+        <section class="agent-console" aria-label="Completed agent output">
+          <div class="output-toolbar">
+            <div><span class="terminal-dot red"></span><span class="terminal-dot amber"></span><span class="terminal-dot green"></span></div>
+            <span id="agent-run-label">Saved agent output</span>
+            <button id="agent-stop-run" type="button" disabled>Stop</button>
+          </div>
+          <pre id="agent-output" aria-live="polite">Choose a completed agent to inspect and reuse its runbook.</pre>
+        </section>
+      </main>
 
       <main id="auth-workspace" class="auth-main hidden" aria-label="Agent authentication console">
         <header class="auth-heading">

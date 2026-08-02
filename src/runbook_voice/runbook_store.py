@@ -132,6 +132,7 @@ _MATCH_FIELDS = frozenset(
         "trigger",
         "trigger_phrases",
         "utterance",
+        "utterance_examples",
         "utterances",
     }
 )
@@ -272,6 +273,15 @@ class JSONRunbookStore:
         ):
             raise RunbookStoreError("matcher must return one of its candidate runbooks")
         return copy.deepcopy(dict(selected))
+
+    def list(self) -> list[Runbook]:
+        """Return isolated copies of every completed runbook in store order."""
+
+        if not self.path.parent.exists():
+            return []
+        with self._lock(exclusive=False):
+            runbooks = self._read_unlocked()
+        return copy.deepcopy(runbooks)
 
     @contextmanager
     def _lock(self, *, exclusive: bool) -> Iterator[None]:

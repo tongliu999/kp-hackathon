@@ -19,6 +19,8 @@ const MAX_BRANCH_LIMIT = 8;
 const DEFAULT_TREE_DEPTH = 3;
 const MIN_TREE_DEPTH = 1;
 const MAX_TREE_DEPTH = 4;
+const AGENT_MARKER = "AGENTS_JSON ";
+const AGENT_MATCH_MARKER = "AGENT_MATCH ";
 const DEFAULT_REQUEST =
   "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.";
 const types = new Map([
@@ -52,6 +54,42 @@ async function readJson(request) {
     if (body.length > 32_000) throw new Error("request body is too large");
   }
   return body ? JSON.parse(body) : {};
+}
+
+function completedAgents(args, marker) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python", ["-m", "runbook_voice.completed_agents", ...args], {
+      cwd: root,
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      shell: false,
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+    child.stdout.on("data", (chunk) => { stdout = `${stdout}${chunk}`.slice(-1_000_000); });
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-20_000); });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `completed-agent catalog exited ${code}`));
+        return;
+      }
+      const line = stdout.split("\n").find((entry) => entry.startsWith(marker));
+      if (!line) {
+        reject(new Error("completed-agent catalog returned no structured result"));
+        return;
+      }
+      try {
+        resolve(JSON.parse(line.slice(marker.length)));
+      } catch {
+        reject(new Error("completed-agent catalog returned invalid JSON"));
+      }
+    });
+  });
 }
 
 function authService() {
@@ -230,6 +268,33 @@ function taskCommand(task, input) {
       ],
     };
   }
+  if (task === "replay") {
+    const agentId = String(input?.agentId ?? "");
+    if (!/^[A-Za-z0-9._-]{1,120}$/.test(agentId)) {
+      throw new Error("select a valid completed agent first");
+    }
+    const slots = input?.slots;
+    if (!slots || typeof slots !== "object" || Array.isArray(slots)) {
+      throw new Error("agent slots must be an object");
+    }
+    const slotsJson = JSON.stringify(slots);
+    if (slotsJson.length > 12_000) throw new Error("agent slot values are too large");
+    return {
+      label: `Reuse completed agent · ${agentId}`,
+      agentId,
+      command: "python",
+      args: [
+        "-m",
+        "runbook_voice.completed_agents",
+        "run",
+        "--id",
+        agentId,
+        "--slots-json",
+        slotsJson,
+        ...(input?.confirmed === true ? ["--confirm"] : []),
+      ],
+    };
+  }
   if (task === "judge") {
     const record = selectedHistory(input);
     return {
@@ -278,6 +343,7 @@ function publicRun(run) {
     request: run.request,
     branchLimit: run.branchLimit,
     maxDepth: run.maxDepth,
+    agentId: run.agentId,
     plannedBranches: run.plannedBranches,
     plan: run.plan,
     parentPhase: run.parentPhase,
@@ -352,6 +418,7 @@ function startRun(task, input) {
     request: spec.request ?? null,
     branchLimit: spec.branchLimit ?? null,
     maxDepth: spec.maxDepth ?? null,
+    agentId: spec.agentId ?? null,
     plannedBranches: null,
     plan: null,
     parentPhase: task === "fanout" ? "planning approaches" : null,
@@ -394,6 +461,25 @@ function startRun(task, input) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (request.method === "GET" && pathname === "/api/agents") {
+    try {
+      json(response, 200, await completedAgents(["list"], AGENT_MARKER));
+    } catch (error) {
+      json(response, 500, { error: error.message });
+    }
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/agents/match") {
+    try {
+      const input = await readJson(request);
+      const utterance = String(input?.request ?? "").trim();
+      if (!utterance || utterance.length > 1_000) throw new Error("request must be 1–1,000 characters");
+      json(response, 200, await completedAgents(["match", utterance], AGENT_MATCH_MARKER));
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+    return true;
+  }
   if (request.method === "GET" && pathname === "/api/auth") {
     try {
       json(response, 200, (await authService()).snapshot());
@@ -495,6 +581,21 @@ async function handleApi(request, response, pathname) {
   if (request.method === "POST" && pathname === "/api/runs") {
     try {
       const input = await readJson(request);
+      if (input.task === "fanout") {
+        const utterance = String(input?.request ?? DEFAULT_REQUEST).trim();
+        if (!utterance || utterance.length > 1_000) {
+          throw new Error("request must be 1–1,000 characters");
+        }
+        const match = await completedAgents(["match", utterance], AGENT_MATCH_MARKER);
+        if (match.matched) {
+          json(response, 200, {
+            kind: "agent_match",
+            agent: match.agent,
+            message: `Reusing ${match.agent.name}; no branch search was launched.`,
+          });
+          return true;
+        }
+      }
       const run = startRun(input.task, input);
       json(response, 202, publicRun(run));
     } catch (error) {
