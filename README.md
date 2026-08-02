@@ -251,11 +251,15 @@ answer, metric, and safety outcome for the selected branch:
 npm run history
 ```
 
-Open `http://127.0.0.1:4173`. From the page you can set a maximum branch count and
-submit a prompt to the adaptive parent workflow. The parent chooses how many real
-Sailboxes the task needs (2–8, never blindly targeting the maximum), assigns a
-materially different approach to each, judges the complete trajectories, distills
-the winner, validates the result, and updates `demo/runbook-store.json`. The manual
+Open `http://127.0.0.1:4173`. From the page you can set maximum children per level
+and a maximum tree depth, then submit a prompt to the adaptive parent workflow. The
+parent chooses how many real Sailboxes the first level needs (2–8, never blindly
+targeting the maximum), assigns a materially different approach to each, and judges
+the complete trajectories. If the best path is incomplete, it checkpoints that
+child's entire environment and forks distinct continuations from it. This repeats
+until the parent marks the path complete or reaches the depth bound. It then distills
+the full root-to-leaf path, validates the result, stores explicit **do** and **avoid**
+guidance with the executable runbook, and updates `demo/runbook-store.json`. The manual
 judge and distill controls remain available for inspection or reruns, alongside
 output and authentication management. Development checks remain available from the
 command line, but are intentionally not exposed as console actions.
@@ -264,6 +268,10 @@ The console exposes only that fixed action allowlist—there is no arbitrary she
 input. Only one workflow runs at a time, live output stays visible, and Stop
 sends an interrupt so Sailbox cleanup can run. Branch traces explicitly show
 that messages, charges, and bookings remain unavailable inside search branches.
+Every completed prompt remains under its own `runs/<job_id>/` directory and in the
+left-hand history; deeper exploration adds child nodes to that run rather than
+replacing earlier runs or earlier levels. `tree.json` retains every parent decision
+and continuation rationale, while each `bN.json` trajectory retains its ancestry.
 
 This coordinator intentionally performs no bookings or other irreversible side
 effects. The real worker is `BranchingSearch` below, which implements
@@ -325,6 +333,14 @@ median against 11.0s for `fork()` three times, and the checkpoint outlives the
 parent. Each child runs `branch_agent.py`, a
 stdlib-only program shipped into the box verbatim, which drives its own agent
 loop against Sail's inference API and records every step it takes.
+
+When a round is not complete, the parent selects the strongest child and checkpoints
+that running environment again. Continuations inherit far more than conversation
+history: Python processes, browser cookies, local databases, cloned repositories,
+vector indexes, downloaded datasets, and caches all carry forward. Only Branch's
+orchestration markers are cleared before the continuation starts. The UI persists
+`parent_branch_id` and `depth` for every trajectory and renders these checkpoints as
+a tree. Maximum children per level and maximum depth are independent hard cost bounds.
 
 Two details are load-bearing rather than stylistic:
 

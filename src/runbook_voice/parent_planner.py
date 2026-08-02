@@ -21,8 +21,10 @@ different evidence. Approaches must differ in strategy, information source, cons
 handling, or validation method — cosmetic prompt rewrites are duplicates.
 
 Children are read-only researchers. They cannot book, pay, send, publish, or perform
-other irreversible external actions. Their complete trajectories will return to you;
-you will judge the best one and learn a reusable runbook from the winner.
+other irreversible external actions. Their complete trajectories will return to you.
+If the best attempt is incomplete, its entire Sailbox can be checkpointed and forked
+again so later children improve the existing environment instead of restarting. The
+final root-to-leaf path becomes a reusable runbook with both do and avoid guidance.
 """
 
 

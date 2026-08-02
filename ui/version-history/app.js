@@ -46,6 +46,12 @@ function tokens(value) {
 
 function branchStatus(branch, run) {
   if (run.winner === branch.branch_id) return "winner";
+  const byId = new Map(run.branches.map((item) => [item.branch_id, item]));
+  let cursor = byId.get(run.winner);
+  while (cursor?.parent_branch_id) {
+    if (cursor.parent_branch_id === branch.branch_id) return "promising";
+    cursor = byId.get(cursor.parent_branch_id);
+  }
   if (branch.error || !branch.success_signal) return "stopped";
   return "completed";
 }
@@ -64,7 +70,7 @@ function workflowHistory(run) {
     workflowId: run.id,
     task: run.request,
     source: "live",
-    path: "live fan-out",
+    path: "live checkpoint tree",
     createdAt: run.startedAt,
     winner: null,
     branches: [],
@@ -73,14 +79,16 @@ function workflowHistory(run) {
     expectedBranches: run.plannedBranches,
     plannedApproaches: run.plan?.approaches ?? [],
     branchLimit: run.branchLimit,
+    maxDepth: run.maxDepth,
     learning: run.learning,
     metrics: run.metrics,
+    treeRounds: run.treeRounds ?? [],
   };
 }
 
 function liveRunMeta(run) {
-  if (run.expectedBranches) return `${run.expectedBranches} approaches · ${run.workflowPhase ?? "running"}`;
-  return `parent choosing up to ${run.branchLimit ?? 5}`;
+  if (run.expectedBranches) return `${run.expectedBranches} first-round approaches · ${run.workflowPhase ?? "running"}`;
+  return `parent choosing up to ${run.branchLimit ?? 5} children × ${run.maxDepth ?? 3} levels`;
 }
 
 function upsertWorkflowHistory(run, { select = false } = {}) {
@@ -122,7 +130,7 @@ async function loadHistory({ preferPrompt } = {}) {
   if (activeWorkflow && !activeRunId) {
     activeRunId = activeWorkflow.workflowId;
     lastFanoutPrompt = activeWorkflow.task;
-    runLabel.textContent = "Adaptive Sail fan-out + learn";
+    runLabel.textContent = "Adaptive Sail tree + learn";
     setConsoleState(activeWorkflow.workflowStatus, activeWorkflow.workflowStatus === "stopping" ? "Stopping safely" : "Running");
     pollTimer = window.setTimeout(pollRun, 100);
   }
@@ -156,7 +164,7 @@ function renderRunList() {
     const meta = element("span", "run-list-meta");
     const branchMeta = run.workflowStatus
       ? liveRunMeta(run)
-      : `${run.branches.length} branches`;
+    : `${run.branches.length} tree nodes`;
     meta.append(element("span", "", branchMeta));
     meta.append(element("span", "", new Date(run.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })));
     button.append(meta);
@@ -172,7 +180,7 @@ function selectRun(run) {
   const meta = document.querySelector("#selected-meta");
   meta.replaceChildren(
     element("span", `source-chip ${run.source}`, run.source),
-    element("span", "", run.workflowStatus ? liveRunMeta(run) : `${run.branches.length} trajectories`),
+    element("span", "", run.workflowStatus ? liveRunMeta(run) : `${run.branches.length} persisted tree nodes`),
     element("span", "", run.workflowStatus ?? (run.winner ? `winner ${run.winner}` : "not judged")),
     element("span", "", run.path)
   );
@@ -191,7 +199,7 @@ function renderBranchCanvas() {
   promptNode.append(element("strong", "", compact(selectedRun.task, 118)));
   const approachCount = selectedRun.workflowStatus
     ? (selectedRun.expectedBranches ? `${selectedRun.expectedBranches} parent-planned approaches` : `parent choosing up to ${selectedRun.branchLimit ?? 5} approaches`)
-    : `${selectedRun.branches.length} independent approaches`;
+    : `${selectedRun.branches.length} nodes across ${treeDepth(selectedRun)} levels`;
   promptNode.append(element("small", "", approachCount));
   promptNode.addEventListener("click", () => {
     selectedBranch = null;
@@ -200,7 +208,7 @@ function renderBranchCanvas() {
   });
   graph.append(promptNode);
 
-  const branches = element("div", "branch-row");
+  const branches = element("div", "branch-forest");
   if (selectedRun.workflowStatus && !selectedRun.branches.length) {
     if (!selectedRun.expectedBranches) {
       const planner = element("div", "branch-node live-branch parent-planner-node");
@@ -213,25 +221,38 @@ function renderBranchCanvas() {
       progress.append(element("i"), element("i"), element("i"));
       planner.append(progress);
       branches.append(planner);
-    }
-    for (let index = 0; index < (selectedRun.expectedBranches ?? 0); index += 1) {
-      const node = element("div", "branch-node live-branch");
-      const heading = element("span", "branch-heading");
-      heading.append(element("span", "branch-id", `b${index}`));
-      heading.append(element("span", "branch-state running", selectedRun.workflowStatus));
-      node.append(heading);
-      const phaseCopy = selectedRun.workflowPhase === "judging and learning"
-        ? "Trajectory complete; parent is judging and learning…"
-        : "Distinct agent trajectory is running…";
-      node.append(element("span", "branch-angle", selectedRun.plannedApproaches?.[index] ?? phaseCopy));
-      const progress = element("span", "live-progress");
-      progress.append(element("i"), element("i"), element("i"));
-      node.append(progress);
-      branches.append(node);
+    } else {
+      const liveRun = { ...selectedRun, branches: liveTreeNodes(selectedRun) };
+      branches.replaceChildren(...branchForest(liveRun, null));
     }
   }
-  selectedRun.branches.forEach((branch) => {
-    const status = branchStatus(branch, selectedRun);
+  if (selectedRun.branches.length) {
+    branches.replaceChildren(...branchForest(selectedRun, null));
+  }
+  graph.append(branches);
+  branchCanvas.append(graph);
+}
+
+function branchForest(run, parentId) {
+  return run.branches
+    .filter((branch) => (branch.parent_branch_id ?? null) === parentId)
+    .sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0) || a.branch_id.localeCompare(b.branch_id, undefined, { numeric: true }))
+    .map((branch) => {
+      const item = element("div", "branch-tree-item");
+      item.append(branchButton(branch, run));
+      const children = branchForest(run, branch.branch_id);
+      if (children.length) {
+        const forest = element("div", "branch-forest");
+        forest.append(...children);
+        item.append(forest);
+      }
+      return item;
+    });
+}
+
+function branchButton(branch, run) {
+    if (branch.live) return liveBranchButton(branch);
+    const status = branchStatus(branch, run);
     const button = element("button", `branch-node ${status}`);
     button.type = "button";
     button.classList.toggle("selected", selectedBranch?.branch_id === branch.branch_id);
@@ -239,7 +260,7 @@ function renderBranchCanvas() {
     button.setAttribute("aria-label", `Inspect ${branch.branch_id} trace`);
     const heading = element("span", "branch-heading");
     heading.append(element("span", "branch-id", branch.branch_id));
-    heading.append(element("span", `branch-state ${status}`, status));
+    heading.append(element("span", `branch-state ${status}`, `${status} · d${branch.depth ?? 0}`));
     button.append(heading);
     button.append(element("span", "branch-angle", compact(branch.angle, 96)));
     const metrics = element("span", "branch-metrics");
@@ -251,10 +272,60 @@ function renderBranchCanvas() {
     metrics.append(element("span", "", `${branch.steps.filter((step) => step.outcome === "error").length} errors`));
     button.append(metrics);
     button.addEventListener("click", () => selectBranch(branch));
-    branches.append(button);
-  });
-  graph.append(branches);
-  branchCanvas.append(graph);
+    return button;
+}
+
+function liveTreeNodes(run) {
+  const nodes = (run.plannedApproaches ?? []).map((angle, index) => ({
+    branch_id: `b${index}`,
+    parent_branch_id: null,
+    depth: 0,
+    angle,
+    live: true,
+    liveState: "running",
+  }));
+  let nextId = nodes.length;
+  for (const round of run.treeRounds ?? []) {
+    nodes.filter((node) => node.depth === round.depth).forEach((node) => {
+      node.liveState = node.branch_id === round.winner ? "promising" : "stopped";
+    });
+    for (const angle of round.next_approaches ?? []) {
+      nodes.push({
+        branch_id: `b${nextId++}`,
+        parent_branch_id: round.winner,
+        depth: round.depth + 1,
+        angle,
+        live: true,
+        liveState: "running",
+      });
+    }
+    if (round.complete) {
+      const winner = nodes.find((node) => node.branch_id === round.winner);
+      if (winner) winner.liveState = "winner";
+    }
+  }
+  return nodes;
+}
+
+function liveBranchButton(branch) {
+  const node = element("div", `branch-node live-branch ${branch.liveState}`);
+  const heading = element("span", "branch-heading");
+  heading.append(element("span", "branch-id", branch.branch_id));
+  heading.append(element("span", `branch-state ${branch.liveState}`, `${branch.liveState} · d${branch.depth}`));
+  node.append(heading, element("span", "branch-angle", compact(branch.angle, 96)));
+  if (branch.liveState === "running") {
+    const progress = element("span", "live-progress");
+    progress.append(element("i"), element("i"), element("i"));
+    node.append(progress);
+  } else {
+    node.append(element("span", "live-progress", branch.liveState === "promising" ? "checkpoint selected" : "round complete"));
+  }
+  return node;
+}
+
+function treeDepth(run) {
+  if (!run.branches.length) return 0;
+  return Math.max(...run.branches.map((branch) => branch.depth ?? 0)) + 1;
 }
 
 function selectBranch(branch) {
@@ -285,8 +356,8 @@ function renderRunSummary() {
     const live = element("section", "live-run-summary");
     live.append(element("strong", "", selectedRun.workflowPhase ?? "Parent workflow in progress"));
     live.append(element("p", "", selectedRun.expectedBranches
-      ? `The parent chose ${selectedRun.expectedBranches} distinct approaches within your limit. After they finish, it will judge the complete trajectories, distill the winner, validate the runbook, and update its durable memory.`
-      : `The parent is deciding how many distinct approaches this task needs, up to your limit of ${selectedRun.branchLimit ?? 5}.`));
+      ? `The parent chose ${selectedRun.expectedBranches} distinct first-round approaches. It can checkpoint the best complete environment and fork improved continuations for up to ${selectedRun.maxDepth ?? 3} levels before distilling the full winning path.`
+      : `The parent is deciding how many distinct approaches this task needs, up to ${selectedRun.branchLimit ?? 5} children per level and ${selectedRun.maxDepth ?? 3} levels.`));
     inspector.append(live);
     return;
   }
@@ -295,6 +366,25 @@ function renderRunSummary() {
     learned.append(element("strong", "", `Parent learned ${selectedRun.learning.runbook_name ?? selectedRun.learning.runbook_id}`));
     learned.append(element("p", "", `${selectedRun.learning.reason} The validated runbook was saved as ${selectedRun.learning.runbook_id} in ${selectedRun.learning.store_path}.`));
     inspector.append(learned);
+    const guidance = selectedRun.learning.guidance;
+    if (guidance?.do?.length || guidance?.avoid?.length) {
+      const guide = element("section", "inspector-section runbook-guidance");
+      guide.append(element("h3", "", "Learned runbook guidance"));
+      if (guidance.do?.length) guide.append(detailRow("Do", guidance.do.map((item) => `• ${item}`).join("\n"), true));
+      if (guidance.avoid?.length) guide.append(detailRow("Avoid", guidance.avoid.map((item) => `• ${item}`).join("\n"), true));
+      inspector.append(guide);
+    }
+  }
+  if (selectedRun.tree?.rounds?.length) {
+    const decisions = element("section", "inspector-section");
+    decisions.append(element("h3", "", "Parent decisions"));
+    for (const round of selectedRun.tree.rounds) {
+      decisions.append(detailRow(
+        `Depth ${round.depth} · ${round.winner}`,
+        `${round.complete ? "Complete" : "Checkpointed for refinement"}: ${round.reason}`
+      ));
+    }
+    inspector.append(decisions);
   }
   const grid = element("div", "run-metric-grid");
   const totalSteps = selectedRun.branches.reduce((sum, branch) => sum + branch.steps.length, 0);
@@ -305,7 +395,7 @@ function renderRunSummary() {
       + (runMetrics.parent_inference?.input_tokens ?? 0) + (runMetrics.parent_inference?.output_tokens ?? 0)
     : null;
   const displayCost = runMetrics?.total_cost_usd ?? runMetrics?.known_cost_usd;
-  const cards = [["Branches", selectedRun.branches.length], ["Total steps", totalSteps], ["Success signals", `${successes}/${selectedRun.branches.length}`], ["Winner", selectedRun.winner ?? "—"]];
+  const cards = [["Tree nodes", selectedRun.branches.length], ["Tree depth", treeDepth(selectedRun)], ["Total steps", totalSteps], ["Success signals", `${successes}/${selectedRun.branches.length}`], ["Winner", selectedRun.winner ?? "—"]];
   if (runMetrics) cards.push([runMetrics.total_cost_usd == null ? "Known spend" : "Total spend", usd(displayCost)], ["Model tokens", tokens(totalTokens)]);
   for (const [label, value] of cards) {
     const card = element("div", "run-metric");
@@ -333,7 +423,7 @@ function renderRunSummary() {
   selectedRun.branches.forEach((branch) => {
     const row = element("button", "approach-row");
     row.type = "button";
-    row.append(element("b", "", branch.branch_id), element("p", "", branch.angle));
+    row.append(element("b", "", `${branch.branch_id} · d${branch.depth ?? 0}`), element("p", "", branch.angle));
     row.addEventListener("click", () => selectBranch(branch));
     section.append(row);
   });
@@ -385,6 +475,8 @@ function renderTraceInspector(branch) {
   header.append(element("p", "trace-angle", branch.angle));
   const stats = element("div", "trace-stats");
   stats.append(element("span", "", `${branch.steps.length} steps`));
+  stats.append(element("span", "", `depth ${branch.depth ?? 0}`));
+  if (branch.parent_branch_id) stats.append(element("span", "", `from ${branch.parent_branch_id}`));
   stats.append(element("span", "", elapsed(branch.wall_ms)));
   stats.append(element("span", "", `${branch.steps.filter((step) => step.outcome === "abandoned").length} abandoned`));
   stats.append(element("span", "", `${branch.steps.filter((step) => step.outcome === "error").length} errors`));
@@ -401,6 +493,14 @@ function renderTraceInspector(branch) {
   inspector.append(auditSection("Files changed", "No structured file mutations were emitted by this trajectory."));
   inspector.append(auditSection("Emails sent", "None. Branches are read-only and cannot send external messages.", "safe"));
   inspector.append(auditSection("Conversations", "No external conversations were recorded."));
+  const parentDecision = selectedRun.tree?.rounds?.find((round) => round.winner === branch.branch_id);
+  if (parentDecision) {
+    inspector.append(auditSection(
+      "Parent decision",
+      `${parentDecision.complete ? "Selected as the complete path" : "Selected for checkpoint refinement"}. ${parentDecision.reason}`,
+      "safe"
+    ));
+  }
   const modelMetrics = branch.metrics;
   const money = modelMetrics
     ? `${usd(modelMetrics.estimated_cost_usd)} estimated model cost · ${tokens(modelMetrics.input_tokens)} input + ${tokens(modelMetrics.output_tokens)} output tokens across ${modelMetrics.model_calls} calls. Sailbox infrastructure is reported at the run level.`
@@ -451,6 +551,7 @@ async function startTask(task) {
     if (task === "fanout") {
       body.request = document.querySelector("#fanout-request").value.trim();
       body.maxBranches = Number(document.querySelector("#max-branches").value);
+      body.maxDepth = Number(document.querySelector("#max-depth").value);
       lastFanoutPrompt = body.request;
     }
     if (task === "judge" || task === "distill") {

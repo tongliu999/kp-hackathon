@@ -18,6 +18,7 @@ from runbook_voice.branch_search import (
     InBoxAgentLauncher,
     Step,
     Trajectory,
+    TreeDecision,
     agent_source,
     checkpoint_fanout,
 )
@@ -212,6 +213,33 @@ class ScriptedLauncher:
         )
 
 
+class TwoRoundController:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def decide(self, trajectories, *, depth, can_continue):
+        self.calls.append((depth, can_continue, [item.branch_id for item in trajectories]))
+        if depth == 0:
+            return TreeDecision(
+                winner=trajectories[0].branch_id,
+                complete=False,
+                reason="The first pass needs a deeper independent verification round.",
+                next_angles=(
+                    Angle("x", "Deep verification one", "Continue from inherited state and verify the first missing constraint."),
+                    Angle("y", "Deep verification two", "Continue from inherited state and cross-check every remaining constraint."),
+                ),
+                do=("Keep the verified evidence from the first pass.",),
+                avoid=("Do not repeat the first pass's failed endpoint.",),
+            )
+        return TreeDecision(
+            winner=trajectories[1].branch_id,
+            complete=True,
+            reason="The second pass now covers every requested constraint with evidence.",
+            do=("Use the independently verified complete path.",),
+            avoid=("Do not use the unsupported sibling result.",),
+        )
+
+
 # --- the trajectory model ------------------------------------------------------
 
 
@@ -311,6 +339,38 @@ async def test_one_request_yields_three_trajectories_from_three_boxes(fake_sail)
     assert len({t.sailbox_id for t in trajectories}) == 3
     assert [t.branch_id for t in trajectories] == ["b0", "b1", "b2"]
     assert all(len(t.steps) >= 2 for t in trajectories)
+
+
+async def test_tree_search_checkpoints_the_winner_and_keeps_ancestry(fake_sail) -> None:
+    sail = fake_sail()
+    controller = TwoRoundController()
+    search = BranchingSearch(api_key="sk-test", launcher=ScriptedLauncher())
+
+    result = await search.search_tree(
+        TASK, "job1234", controller=controller, max_depth=3
+    )
+
+    assert [item.branch_id for item in result.trajectories] == ["b0", "b1", "b2", "b3", "b4"]
+    assert [item.parent_branch_id for item in result.trajectories] == [None, None, None, "b0", "b0"]
+    assert [item.depth for item in result.trajectories] == [0, 0, 0, 1, 1]
+    assert result.winner == "b4"
+    assert controller.calls == [(0, True, ["b0", "b1", "b2"]), (1, True, ["b3", "b4"])]
+    assert ("sb-child-0", "checkpoint ttl=3600") in sail.base.log
+    assert sail.base.terminated == 1
+    assert all(child.terminated == 1 for child in sail.children)
+
+
+async def test_tree_depth_is_a_hard_bound(fake_sail) -> None:
+    fake_sail()
+    controller = TwoRoundController()
+    search = BranchingSearch(api_key="sk-test", launcher=ScriptedLauncher())
+
+    result = await search.search_tree(
+        TASK, "job1234", controller=controller, max_depth=1
+    )
+
+    assert len(result.trajectories) == 3
+    assert controller.calls == [(0, False, ["b0", "b1", "b2"])]
 
 
 async def test_every_box_is_terminated_including_the_base(fake_sail) -> None:
@@ -433,6 +493,19 @@ async def test_the_agent_is_launched_detached() -> None:
     # Anything tied to an in-flight exec() session is reaped in a branched box.
     assert "setsid nohup" in launch
     assert launch.rstrip().endswith("& echo launched")
+
+
+async def test_continuation_clears_only_inherited_orchestration_markers() -> None:
+    box = FakeBox("sb-0", result=a_trajectory("b0"))
+    launcher = InBoxAgentLauncher(api_key="sk-test", poll_interval_seconds=0)
+
+    await launcher.launch(box, DEFAULT_ANGLES[0], TASK)
+
+    cleanup = box.commands[0]
+    assert cleanup.startswith("rm -f /root/branch/job.json")
+    for marker in ["steps.jsonl", "trajectory.json", "DONE", "agent.log"]:
+        assert marker in cleanup
+    assert "branch_agent.py" not in cleanup
 
 
 async def test_the_credential_rides_in_the_environment_not_the_job_file() -> None:

@@ -188,12 +188,25 @@ class Runbook:
     slots: tuple[SlotDefinition, ...]
     steps: tuple[RunbookStep, ...]
     description: str | None = None
+    guidance: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.name or not self.version:
             raise RunbookSchemaError("runbook id, name, and version are required")
         object.__setattr__(self, "slots", tuple(self.slots))
         object.__setattr__(self, "steps", tuple(self.steps))
+        if self.guidance is not None:
+            if not isinstance(self.guidance, Mapping):
+                raise RunbookSchemaError("runbook guidance must be an object")
+            for label in ("do", "avoid"):
+                values = self.guidance.get(label)
+                if not isinstance(values, Sequence) or isinstance(values, str | bytes):
+                    raise RunbookSchemaError(f"runbook guidance.{label} must be an array")
+                if not values or not all(isinstance(item, str) and item.strip() for item in values):
+                    raise RunbookSchemaError(
+                        f"runbook guidance.{label} needs non-empty instructions"
+                    )
+            object.__setattr__(self, "guidance", _freeze(self.guidance))
         slot_names = [slot.name for slot in self.slots]
         step_ids = [step.id for step in self.steps]
         if len(slot_names) != len(set(slot_names)):
@@ -209,6 +222,7 @@ class Runbook:
                 name=document["name"],
                 version=str(document.get("version", document.get("schema_version", ""))),
                 description=document.get("description"),
+                guidance=document.get("guidance"),
                 slots=tuple(SlotDefinition.from_dict(slot) for slot in document.get("slots", ())),
                 steps=tuple(RunbookStep.from_dict(step) for step in document["steps"]),
             )
@@ -225,6 +239,8 @@ class Runbook:
         }
         if self.description is not None:
             document["description"] = self.description
+        if self.guidance is not None:
+            document["guidance"] = _thaw(self.guidance)
         return document
 
     def resolve_slots(self, supplied: Mapping[str, Any]) -> dict[str, Any]:

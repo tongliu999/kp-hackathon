@@ -27,14 +27,18 @@ from typing import Sequence
 from . import branch_agent
 from .branch_search import (
     DEFAULT_APP,
+    DEFAULT_TREE_DEPTH,
+    MAX_TREE_DEPTH,
+    MIN_TREE_DEPTH,
     BranchingSearch,
     InBoxAgentLauncher,
     Trajectory,
+    TreeDecision,
     resolve_api_key,
 )
 from .costs import run_metrics
 from .judge import DEFAULT_MODEL as DEFAULT_PARENT_MODEL
-from .judge import PairwiseJudge, SailJudgeModel
+from .judge import JudgeVerdict, SailJudgeModel
 from .parent_learning import learn_from_trajectories
 from .parent_planner import (
     DEFAULT_BRANCH_LIMIT,
@@ -43,6 +47,7 @@ from .parent_planner import (
     ParentPlanner,
     validate_branch_limit,
 )
+from .parent_refinement import ParentTreeController
 from .runbook_store import JSONRunbookStore
 from .sailbox_spend import get_sailbox_spend
 
@@ -63,6 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--parent-model",
         default=DEFAULT_PARENT_MODEL,
         help="model used by the parent to plan approaches and judge the winner",
+    )
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=DEFAULT_TREE_DEPTH,
+        help=(
+            f"maximum checkpoint levels ({MIN_TREE_DEPTH}–{MAX_TREE_DEPTH}; "
+            f"default: {DEFAULT_TREE_DEPTH})"
+        ),
     )
     parser.add_argument(
         "--max-branches",
@@ -171,6 +185,15 @@ async def run_demo(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"invalid branch limit: {exc}")
         return 2
+    if (
+        isinstance(args.max_depth, bool)
+        or not isinstance(args.max_depth, int)
+        or not MIN_TREE_DEPTH <= args.max_depth <= MAX_TREE_DEPTH
+    ):
+        print(
+            f"invalid tree depth: must be between {MIN_TREE_DEPTH} and {MAX_TREE_DEPTH}"
+        )
+        return 2
 
     job_id = secrets.token_hex(6)
     api_key = resolve_api_key()
@@ -190,6 +213,7 @@ async def run_demo(args: argparse.Namespace) -> int:
                 "branch_limit": plan.max_branches,
                 "rationale": plan.rationale,
                 "approaches": [angle.angle for angle in plan.angles],
+                "max_depth": args.max_depth,
             }
         ),
         flush=True,
@@ -214,8 +238,43 @@ async def run_demo(args: argparse.Namespace) -> int:
         f"parent-model={args.parent_model}  window={args.window}"
     )
     print(f"request: {args.request}\n")
-    trajectories = await search.search(args.request, job_id)
+    controller = _ReportingController(
+        ParentTreeController(parent_model, max_branches=branch_limit)
+    )
+    tree = await search.search_tree(
+        args.request,
+        job_id,
+        controller=controller,
+        max_depth=args.max_depth,
+    )
+    trajectories = tree.trajectories
     paths = search.persist(trajectories, job_id)
+    directory = paths[0].parent
+    (directory / "tree.json").write_text(
+        json.dumps(
+            {
+                "max_depth": args.max_depth,
+                "winner": tree.winner,
+                "rounds": [
+                    {
+                        "depth": depth,
+                        "winner": decision.winner,
+                        "complete": decision.complete,
+                        "reason": decision.reason,
+                        "do": list(decision.do),
+                        "avoid": list(decision.avoid),
+                        "next_approaches": [
+                            angle.angle for angle in decision.next_angles
+                        ],
+                    }
+                    for depth, decision in enumerate(tree.decisions)
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     failures = report(trajectories, paths)
     if failures:
@@ -223,14 +282,16 @@ async def run_demo(args: argparse.Namespace) -> int:
         for failure in failures:
             print(f"  {failure}")
         return 1
-    directory = paths[0].parent
     print("\nparent judging complete trajectories…", flush=True)
+    guidance = _tree_guidance(tree.decisions)
+    final_reason = tree.decisions[-1].reason
     learned = await asyncio.to_thread(
         learn_from_trajectories,
         trajectories,
         directory=directory,
-        judge=PairwiseJudge(parent_model),
+        judge=_PreselectedJudge(tree.winner, final_reason),
         store=JSONRunbookStore(args.runbook_store),
+        guidance=guidance,
     )
     print(
         "PARENT_LEARNED "
@@ -241,6 +302,8 @@ async def run_demo(args: argparse.Namespace) -> int:
                 "runbook_id": learned.runbook.id,
                 "runbook_name": learned.runbook.name,
                 "store_path": str(learned.store_path),
+                "depth": tree.frontier[0].depth,
+                "guidance": guidance,
             }
         ),
         flush=True,
@@ -257,7 +320,7 @@ async def run_demo(args: argparse.Namespace) -> int:
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print("RUN_METRICS " + json.dumps(metrics), flush=True)
     print(
-        f"\nOK — parent tried {len(trajectories)} approaches, chose "
+        f"\nOK — parent explored {len(trajectories)} tree nodes, chose "
         f"{learned.verdict.winner}, updated runbook {learned.runbook.id!r}, and "
         f"recorded {metrics['cost_status']} spend metrics."
     )
@@ -266,6 +329,50 @@ async def run_demo(args: argparse.Namespace) -> int:
 
 def _rfc3339_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+class _PreselectedJudge:
+    def __init__(self, winner: str, reason: str) -> None:
+        self._verdict = JudgeVerdict(winner, reason)
+
+    def pick(self, _trajectories):
+        return self._verdict
+
+
+class _ReportingController:
+    def __init__(self, controller: ParentTreeController) -> None:
+        self._controller = controller
+
+    def decide(self, trajectories, *, depth: int, can_continue: bool) -> TreeDecision:
+        decision = self._controller.decide(
+            trajectories, depth=depth, can_continue=can_continue
+        )
+        print(
+            "TREE_ROUND "
+            + json.dumps(
+                {
+                    "depth": depth,
+                    "winner": decision.winner,
+                    "complete": decision.complete,
+                    "reason": decision.reason,
+                    "next_approaches": [angle.angle for angle in decision.next_angles],
+                    "do": list(decision.do),
+                    "avoid": list(decision.avoid),
+                }
+            ),
+            flush=True,
+        )
+        return decision
+
+
+def _tree_guidance(decisions: Sequence[TreeDecision]) -> dict[str, list[str]]:
+    def unique(values):
+        return list(dict.fromkeys(value for value in values if value.strip()))
+
+    return {
+        "do": unique(value for decision in decisions for value in decision.do),
+        "avoid": unique(value for decision in decisions for value in decision.avoid),
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:

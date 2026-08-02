@@ -58,6 +58,10 @@ work — not to hedge toward what the others might do.
 Your assigned approach:
 {directive}
 
+Your Linux box may be a checkpoint of the strongest earlier attempt. Inspect and use
+the existing cookies, files, databases, repositories, caches, and running environment.
+Build on useful state; do not restart completed work merely because this is a new turn.
+
 You research and gather. You NEVER complete the task's irreversible step: no \
 booking, reserving, purchasing, paying, ordering, or confirming, and no request \
 that would create or change anything on someone else's system. That step happens \

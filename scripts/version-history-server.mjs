@@ -16,6 +16,9 @@ const MAX_OUTPUT = 80_000;
 const DEFAULT_BRANCH_LIMIT = 5;
 const MIN_BRANCHES = 2;
 const MAX_BRANCH_LIMIT = 8;
+const DEFAULT_TREE_DEPTH = 3;
+const MIN_TREE_DEPTH = 1;
+const MAX_TREE_DEPTH = 4;
 const DEFAULT_REQUEST =
   "Book a table for two at an Italian restaurant in San Francisco tomorrow evening at seven.";
 const types = new Map([
@@ -87,6 +90,7 @@ async function readTrajectoryDirectory(directory, source) {
   let winner = null;
   let learning = null;
   let metrics = null;
+  let tree = null;
   try {
     const payload = JSON.parse(await readFile(path.join(directory, "learning.json"), "utf8"));
     if (payload && typeof payload === "object" && typeof payload.winner === "string") {
@@ -101,6 +105,12 @@ async function readTrajectoryDirectory(directory, source) {
     if (payload && typeof payload === "object") metrics = payload;
   } catch {
     // Metrics were introduced after the first recorded trajectories.
+  }
+  try {
+    const payload = JSON.parse(await readFile(path.join(directory, "tree.json"), "utf8"));
+    if (payload && typeof payload === "object" && Array.isArray(payload.rounds)) tree = payload;
+  } catch {
+    // Flat and interrupted runs do not have a tree manifest.
   }
   try {
     const judgeLog = await readFile(path.join(directory, "judge.log"), "utf8");
@@ -120,6 +130,7 @@ async function readTrajectoryDirectory(directory, source) {
     winner,
     learning,
     metrics,
+    tree,
     branches,
     directory,
   };
@@ -162,7 +173,7 @@ async function listHistory() {
       workflowId: run.id,
       task: run.request,
       source: "live",
-      path: "live fan-out",
+      path: "live checkpoint tree",
       createdAt: run.startedAt,
       winner: null,
       branches: [],
@@ -171,6 +182,8 @@ async function listHistory() {
       expectedBranches: run.plannedBranches,
       plannedApproaches: run.plan?.approaches ?? [],
       branchLimit: run.branchLimit,
+      maxDepth: run.maxDepth,
+      treeRounds: run.treeRounds,
       metrics: run.metrics,
     }));
   return [...activeRecords, ...savedRecords]
@@ -192,10 +205,15 @@ function taskCommand(task, input) {
     if (!Number.isInteger(branchLimit) || branchLimit < MIN_BRANCHES || branchLimit > MAX_BRANCH_LIMIT) {
       throw new Error(`maxBranches must be an integer between ${MIN_BRANCHES} and ${MAX_BRANCH_LIMIT}`);
     }
+    const maxDepth = Number(input?.maxDepth ?? DEFAULT_TREE_DEPTH);
+    if (!Number.isInteger(maxDepth) || maxDepth < MIN_TREE_DEPTH || maxDepth > MAX_TREE_DEPTH) {
+      throw new Error(`maxDepth must be an integer between ${MIN_TREE_DEPTH} and ${MAX_TREE_DEPTH}`);
+    }
     return {
-      label: "Adaptive Sail fan-out + learn",
+      label: "Adaptive Sail tree + learn",
       request,
       branchLimit,
+      maxDepth,
       command: "python",
       args: [
         "-m",
@@ -205,6 +223,8 @@ function taskCommand(task, input) {
         "runs",
         "--max-branches",
         String(branchLimit),
+        "--max-depth",
+        String(maxDepth),
         "--runbook-store",
         "demo/runbook-store.json",
       ],
@@ -257,11 +277,13 @@ function publicRun(run) {
     exitCode: run.exitCode,
     request: run.request,
     branchLimit: run.branchLimit,
+    maxDepth: run.maxDepth,
     plannedBranches: run.plannedBranches,
     plan: run.plan,
     parentPhase: run.parentPhase,
     learning: run.learning,
     metrics: run.metrics,
+    treeRounds: run.treeRounds,
   };
 }
 
@@ -291,6 +313,17 @@ function appendOutput(run, chunk) {
   } else if (run.output.includes("parent judging complete trajectories")) {
     run.parentPhase = "judging and learning";
   }
+  run.treeRounds = [...run.output.matchAll(/TREE_ROUND\s+(\{[^\n]+\})/g)]
+    .map((match) => {
+      try { return JSON.parse(match[1]); } catch { return null; }
+    })
+    .filter(Boolean);
+  if (run.treeRounds.length && !run.learning) {
+    const latest = run.treeRounds.at(-1);
+    run.parentPhase = latest.complete
+      ? "complete path selected"
+      : `refining depth ${latest.depth + 1}`;
+  }
   const metricsMatch = run.output.match(/RUN_METRICS\s+(\{[^\n]+\})/);
   if (metricsMatch) {
     try {
@@ -318,11 +351,13 @@ function startRun(task, input) {
     task,
     request: spec.request ?? null,
     branchLimit: spec.branchLimit ?? null,
+    maxDepth: spec.maxDepth ?? null,
     plannedBranches: null,
     plan: null,
     parentPhase: task === "fanout" ? "planning approaches" : null,
     learning: null,
     metrics: null,
+    treeRounds: [],
     label: spec.label,
     status: "running",
     output: `[console] Starting ${spec.label}…\n`,

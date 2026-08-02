@@ -6,7 +6,7 @@ from typing import Any, Mapping, Sequence
 
 from runbook_voice.branch_search import Trajectory
 from runbook_voice.judge import JudgeVerdict
-from runbook_voice.parent_learning import learn_from_trajectories
+from runbook_voice.parent_learning import _winning_path, learn_from_trajectories
 from runbook_voice.runbook_store import JSONRunbookStore
 
 ROOT = Path(__file__).parents[1]
@@ -63,3 +63,55 @@ def test_learning_replaces_the_same_runbook_instead_of_duplicating_it(tmp_path: 
     )
 
     assert len(json.loads(store.path.read_text())["runbooks"]) == 1
+
+
+def test_parent_keeps_do_and_avoid_guidance_with_the_executable_runbook(tmp_path: Path) -> None:
+    store = JSONRunbookStore(tmp_path / "parent-memory.json")
+    guidance = {
+        "do": ["Verify the requested time against the primary source."],
+        "avoid": ["Do not substitute a later time without saying so."],
+    }
+
+    result = learn_from_trajectories(
+        [fixture("branch-0.json"), fixture("branch-1.json")],
+        directory=tmp_path / "guided",
+        judge=WinnerJudge(),
+        store=store,
+        guidance=guidance,
+    )
+
+    assert result.runbook.to_dict()["guidance"] == guidance
+    persisted = json.loads(store.path.read_text())["runbooks"][0]
+    assert persisted["guidance"] == guidance
+    learning = json.loads((tmp_path / "guided" / "learning.json").read_text())
+    assert learning["guidance"] == guidance
+
+
+def test_winning_leaf_distills_the_complete_ancestor_path() -> None:
+    original = fixture("branch-0.json")
+    midpoint = len(original.steps) // 2
+    parent = Trajectory(
+        branch_id="b0",
+        angle=original.angle,
+        task=original.task,
+        steps=original.steps[:midpoint],
+        success_signal=False,
+        wall_ms=1000,
+    )
+    leaf = Trajectory(
+        branch_id="b2",
+        angle="Verify and complete the inherited path",
+        task=original.task,
+        steps=original.steps[midpoint:],
+        final_answer=original.final_answer,
+        success_signal=True,
+        wall_ms=2000,
+        parent_branch_id="b0",
+        depth=1,
+    )
+
+    document = _winning_path(leaf, [parent, leaf])
+
+    assert len(document["steps"]) == len(original.steps)
+    assert [step["i"] for step in document["steps"]] == list(range(len(original.steps)))
+    assert document["parent_branch_id"] == "b0"

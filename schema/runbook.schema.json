@@ -18,6 +18,16 @@
       "minLength": 10,
       "description": "What this runbook does, in one sentence. The semantic matcher searches against this, so describe the TASK, not the implementation."
     },
+    "guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Parent-learned instructions retained with the executable runbook: what evidence-backed behavior to repeat and what failed or unsafe behavior to avoid.",
+      "required": ["do", "avoid"],
+      "properties": {
+        "do": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "avoid": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "utterance_examples": {
       "type": "array",
       "items": { "type": "string" },

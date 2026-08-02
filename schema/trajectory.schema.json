@@ -15,6 +15,15 @@
       "type": "string",
       "description": "The distinct approach this branch was told to take. Branches given identical prompts produce identical trajectories and the judge has nothing to compare - so this must actually differ."
     },
+    "parent_branch_id": {
+      "type": "string",
+      "description": "The trajectory node whose complete Sailbox state was checkpointed to create this continuation. Absent for first-round children."
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based depth in the run's checkpoint tree."
+    },
     "task": {
       "type": "string",
       "description": "The original request, verbatim. The distiller needs it to know what to generalize toward."

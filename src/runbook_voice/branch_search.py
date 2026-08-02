@@ -29,7 +29,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -41,6 +41,9 @@ DEFAULT_APP = "branch-search"
 DEFAULT_SIZE = "s"
 BRANCH_DIR = branch_agent.BRANCH_DIR
 CHECKPOINT_TTL_SECONDS = 3600
+MIN_TREE_DEPTH = 1
+MAX_TREE_DEPTH = 4
+DEFAULT_TREE_DEPTH = 3
 
 # python3 is not guaranteed in the Debian base image. Installing it on the base
 # box means every selected child inherits it — which is what a checkpoint is for.
@@ -165,6 +168,8 @@ class Trajectory:
     final_answer: str | None = None
     error: str | None = None
     metrics: Mapping[str, Any] | None = None
+    parent_branch_id: str | None = None
+    depth: int = 0
     sailbox_id: str | None = field(default=None, compare=False)
 
     @classmethod
@@ -179,6 +184,8 @@ class Trajectory:
             final_answer=data.get("final_answer"),
             error=data.get("error"),
             metrics=data.get("metrics"),
+            parent_branch_id=data.get("parent_branch_id"),
+            depth=int(data.get("depth", 0)),
             sailbox_id=sailbox_id,
         )
 
@@ -197,6 +204,10 @@ class Trajectory:
             trajectory["error"] = self.error
         if self.metrics:
             trajectory["metrics"] = dict(self.metrics)
+        if self.parent_branch_id is not None:
+            trajectory["parent_branch_id"] = self.parent_branch_id
+        if self.depth:
+            trajectory["depth"] = self.depth
         return trajectory
 
     @property
@@ -216,6 +227,36 @@ class BranchLauncher(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class TreeDecision:
+    """The parent's bounded decision after comparing one round's siblings."""
+
+    winner: str
+    complete: bool
+    reason: str
+    next_angles: tuple[Angle, ...] = ()
+    do: tuple[str, ...] = ()
+    avoid: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TreeSearchResult:
+    trajectories: tuple[Trajectory, ...]
+    frontier: tuple[Trajectory, ...]
+    decisions: tuple[TreeDecision, ...]
+    winner: str
+
+
+class TreeController(Protocol):
+    def decide(
+        self,
+        trajectories: Sequence[Trajectory],
+        *,
+        depth: int,
+        can_continue: bool,
+    ) -> TreeDecision: ...
+
+
+@dataclass(frozen=True, slots=True)
 class InBoxAgentLauncher:
     """Run :mod:`.branch_agent` detached inside a box and poll for its result."""
 
@@ -231,6 +272,23 @@ class InBoxAgentLauncher:
 
     async def launch(self, box: Any, angle: Angle, task: str) -> Trajectory:
         started = time.monotonic()
+        # A continuation child inherits these files from its winning parent.
+        # Clear only orchestration state; cookies, databases, repositories,
+        # caches, and every other part of the Sailbox remain intact.
+        await asyncio.to_thread(
+            box.run,
+            "rm -f "
+            + " ".join(
+                f"{BRANCH_DIR}/{name}"
+                for name in (
+                    branch_agent.JOB_FILE,
+                    branch_agent.STEPS_FILE,
+                    branch_agent.TRAJECTORY_FILE,
+                    branch_agent.DONE_FILE,
+                    "agent.log",
+                )
+            ),
+        )
         job = {
             "branch_id": angle.branch_id,
             "angle": angle.angle,
@@ -465,6 +523,125 @@ class BranchingSearch:
                 await asyncio.to_thread(_terminate, [*children, base_handle.box])
                 self._progress(f"terminated {len(children) + 1} boxes")
 
+    async def search_tree(
+        self,
+        request: str,
+        job_id: str,
+        *,
+        controller: TreeController,
+        max_depth: int = DEFAULT_TREE_DEPTH,
+    ) -> TreeSearchResult:
+        """Repeatedly checkpoint the best child and explore its continuations.
+
+        Unlike :meth:`search`, this preserves each selected child's entire
+        Sailbox as the base for the next round. The controller may stop early
+        when the best path is complete; ``max_depth`` is a hard spend bound.
+        """
+        request = request.strip()
+        if not request:
+            raise ValueError("branching search request must not be empty")
+        if (
+            isinstance(max_depth, bool)
+            or not isinstance(max_depth, int)
+            or not MIN_TREE_DEPTH <= max_depth <= MAX_TREE_DEPTH
+        ):
+            raise ValueError(
+                f"tree depth must be between {MIN_TREE_DEPTH} and {MAX_TREE_DEPTH}"
+            )
+
+        base_handle = await asyncio.to_thread(
+            boot, f"base-{job_id[:8]}", app=self._app, size=self._size
+        )
+        boxes: list[Any] = [base_handle.box]
+        trajectories: list[Trajectory] = []
+        decisions: list[TreeDecision] = []
+        frontier: tuple[Trajectory, ...] = ()
+        source_box = base_handle.box
+        parent_branch_id: str | None = None
+        next_branch_number = 0
+        angles, next_branch_number = _number_angles(
+            self._angles, start=next_branch_number
+        )
+        try:
+            self._progress(
+                f"base box {base_handle.sailbox_id} up in "
+                f"{base_handle.elapsed_seconds:.1f}s (app={self._app})"
+            )
+            started = time.monotonic()
+            await asyncio.to_thread(self._seed, base_handle.box)
+            self._progress(f"base seeded in {time.monotonic() - started:.1f}s")
+
+            for depth in range(max_depth):
+                started = time.monotonic()
+                children = await asyncio.to_thread(
+                    checkpoint_fanout,
+                    source_box,
+                    [f"branch-{angle.branch_id}-{job_id[:8]}" for angle in angles],
+                )
+                boxes.extend(children)
+                self.last_boxes = tuple(_box_id(child) for child in children)
+                self.last_all_boxes = tuple(
+                    identifier for identifier in (_box_id(box) for box in boxes) if identifier
+                )
+                self._progress(
+                    f"tree depth {depth}: checkpointed {parent_branch_id or 'base'} "
+                    f"into {len(children)} children in {time.monotonic() - started:.1f}s"
+                )
+                results = await asyncio.gather(
+                    *(
+                        self._launcher.launch(child, angle, request)
+                        for child, angle in zip(children, angles)
+                    ),
+                    return_exceptions=True,
+                )
+                round_items = tuple(
+                    replace(
+                        self._as_trajectory(result, angle, request, child),
+                        parent_branch_id=parent_branch_id,
+                        depth=depth,
+                    )
+                    for result, angle, child in zip(results, angles, children)
+                )
+                trajectories.extend(round_items)
+                frontier = round_items
+                can_continue = depth + 1 < max_depth
+                decision = await asyncio.to_thread(
+                    controller.decide,
+                    round_items,
+                    depth=depth,
+                    can_continue=can_continue,
+                )
+                by_id = {item.branch_id: (item, child) for item, child in zip(round_items, children)}
+                if decision.winner not in by_id:
+                    raise ValueError(
+                        f"tree controller picked unknown branch {decision.winner!r}"
+                    )
+                decisions.append(decision)
+                self._progress(
+                    f"tree depth {depth}: parent chose {decision.winner}; "
+                    + ("complete" if decision.complete else "needs refinement")
+                )
+                if decision.complete or not can_continue:
+                    return TreeSearchResult(
+                        tuple(trajectories), frontier, tuple(decisions), decision.winner
+                    )
+                if len(decision.next_angles) < 2:
+                    raise ValueError("continuation needs at least two distinct approaches")
+                directives = {angle.directive.casefold() for angle in decision.next_angles}
+                if len(directives) != len(decision.next_angles):
+                    raise ValueError("continuation approaches must be distinct")
+                parent_branch_id = decision.winner
+                source_box = by_id[decision.winner][1]
+                angles, next_branch_number = _number_angles(
+                    decision.next_angles, start=next_branch_number
+                )
+        finally:
+            if not self._keep_boxes:
+                await asyncio.to_thread(_terminate, boxes)
+                self._progress(f"terminated {len(boxes)} boxes")
+
+        raise RuntimeError("tree search ended without a frontier")
+
     def persist(self, trajectories: Sequence[Trajectory], job_id: str) -> list[Path]:
         directory = self._output_dir / job_id
         directory.mkdir(parents=True, exist_ok=True)
@@ -518,6 +695,16 @@ class BranchingSearch:
 def agent_source() -> str:
     """The in-box program's own source, to be written into a box verbatim."""
     return Path(branch_agent.__file__).read_text(encoding="utf-8")
+
+
+def _number_angles(
+    angles: Sequence[Angle], *, start: int
+) -> tuple[tuple[Angle, ...], int]:
+    numbered = tuple(
+        Angle(f"b{start + index}", angle.angle, angle.directive)
+        for index, angle in enumerate(angles)
+    )
+    return numbered, start + len(numbered)
 
 
 def _terminate(boxes: Sequence[Any]) -> None:

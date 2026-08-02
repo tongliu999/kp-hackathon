@@ -54,13 +54,23 @@ test("fan-out prompts appear live in history before trajectories finish", () => 
   assert.match(server, /PARENT_LEARNED/);
   assert.match(server, /RUN_METRICS/);
   assert.match(server, /metrics\.json/);
+  assert.match(server, /tree\.json/);
   assert.match(app, /upsertWorkflowHistory/);
   assert.match(app, /activeWorkflow\.workflowId/);
   assert.match(app, /parent choosing up to/);
-  assert.match(app, /Distinct agent trajectory is running/);
-  assert.match(app, /update its durable memory/);
+  assert.match(app, /checkpoint selected/);
+  assert.match(app, /distilling the full winning path/);
   assert.match(html, /id="max-branches"/);
+  assert.match(html, /id="max-depth"/);
   assert.match(html, /Run adaptive/);
+  assert.match(app, /branchForest/);
+  assert.match(app, /liveTreeNodes/);
+  assert.match(app, /parent_branch_id/);
+  assert.match(app, /Learned runbook guidance/);
+  assert.match(app, /Parent decisions/);
+  assert.match(server, /TREE_ROUND/);
+  assert.match(server, /--max-depth/);
+  assert.match(server, /live checkpoint tree/);
 });
 
 test("console server uses a fixed task allowlist without a shell", () => {
