@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 import json
+import re
 import sys
 from typing import Any, Protocol
 
@@ -23,7 +24,7 @@ class SpokenConfirmationOutput(Protocol):
 
 
 class ExactYesConfirmationGate:
-    """Fail closed: only the complete utterance ``yes`` approves."""
+    """Fail closed: approve only bare yes or the locked stage response."""
 
     def __init__(self, confirmation_input: SpokenConfirmationInput, confirmation_output: SpokenConfirmationOutput) -> None:
         self._input = confirmation_input
@@ -36,7 +37,10 @@ class ExactYesConfirmationGate:
             reply = await self._input.listen()
         except Exception:
             return False
-        return isinstance(reply, str) and reply.strip().casefold() == "yes"
+        if not isinstance(reply, str):
+            return False
+        normalized = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", "", reply.casefold())).strip()
+        return normalized in {"yes", "yes book it"}
 
 
 class WarmPathStatus(str, Enum):

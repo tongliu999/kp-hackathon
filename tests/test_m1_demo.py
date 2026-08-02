@@ -92,6 +92,22 @@ async def test_offline_path_collects_slots_and_returns_fake_confirmation(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_locked_stage_confirmation_dispatches_irreversible_step(tmp_path):
+    path, runner, _, _ = build_path(
+        tmp_path,
+        "Yes, book it.",
+        "2",
+        "Italian",
+        "San Francisco",
+        "tomorrow",
+        "7 pm",
+    )
+    outcome = await path.run("book a restaurant table")
+    assert outcome.status is WarmPathStatus.SUCCEEDED
+    assert [action for action, _ in runner.calls] == ["restaurant.search", "restaurant.book"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reply", ["no", "maybe", "", RuntimeError("silence")])
 async def test_non_exact_yes_never_dispatches_irreversible_step(tmp_path, reply):
     path, runner, _, _ = build_path(

@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test src/booking/__tests__/*.test.js",
-    "reset": "node src/index.js"
+    "reset": "node src/index.js",
+    "rehearse": "node scripts/rehearse.mjs"
   },
   "author": "",
   "license": "MIT",

@@ -11,9 +11,13 @@ export class ConfirmationAbortedError extends Error {
 export async function confirmGate(description, getYes) {
   const readback = `About to: ${description}. Confirm?`;
   const response = await getYes(readback);
-  const normalized = String(response ?? "").trim().toLowerCase();
+  const normalized = String(response ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ");
 
-  if (normalized !== "yes" && normalized !== "y") {
+  if (normalized !== "yes" && normalized !== "y" && normalized !== "yes book it") {
     const reason = normalized ? `heard "${normalized}", not an affirmative yes` : "no response (silence aborts)";
     throw new ConfirmationAbortedError(reason);
   }

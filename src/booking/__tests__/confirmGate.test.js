@@ -10,6 +10,10 @@ test("confirmGate resolves on 'y' (case/whitespace insensitive)", async () => {
   await assert.doesNotReject(() => confirmGate("book it", async () => "  Y \n"));
 });
 
+test("confirmGate accepts the exact configured stage response", async () => {
+  await assert.doesNotReject(() => confirmGate("book it", async () => "Yes, book it."));
+});
+
 test("confirmGate aborts on an explicit no", async () => {
   await assert.rejects(() => confirmGate("book it", async () => "no"), ConfirmationAbortedError);
 });
@@ -24,7 +28,7 @@ test("confirmGate aborts on silence (null/undefined)", async () => {
 });
 
 test("confirmGate aborts on ambiguous responses", async () => {
-  for (const response of ["yeah", "sure", "yes please", "maybe", "yup"]) {
+  for (const response of ["yeah", "sure", "yes please", "yes do it", "maybe", "yup"]) {
     await assert.rejects(
       () => confirmGate("book it", async () => response),
       ConfirmationAbortedError,

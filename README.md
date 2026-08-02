@@ -219,6 +219,26 @@ runbook-cold-task-demo --delay 0.2 \
   "another utterance while that is pending"
 ```
 
+## Repeatable booking rehearsal
+
+Run three timed, consecutive booking rehearsals in explicitly labeled stub mode:
+
+```bash
+npm run rehearse
+```
+
+Every pass uses the exact request in `demo/demo_config.json`, exercises the
+confirmation gate, creates one stub booking, runs the automated reset, and
+fails unless the booking store is clean afterward. To include the M4 offline
+video check, point the command at the local cold-path recording:
+
+```bash
+npm run rehearse -- --cold-video /absolute/path/to/cold-path.mp4
+```
+
+This command never contacts a booking provider. The three-person stage
+rehearsal and a real book/cancel cycle remain manual acceptance checks.
+
 This coordinator intentionally performs no bookings or other irreversible side
 effects. A real agent runner can implement `ColdTaskWorker` later while keeping
 the same lifecycle and callback contract.
