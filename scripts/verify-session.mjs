@@ -22,11 +22,12 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Sailbox } from "@sailresearch/sdk";
 import { chromium } from "playwright";
+import { checkSession, DEFAULT_PROBE_URL } from "./session-check.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const BOX_NAME = process.env.BOOKING_BOX_NAME ?? "booking";
 const CDP_URL = process.env.BOOKING_CDP_URL;
-const PROBE_URL = process.env.BOOKING_PROBE_URL ?? "https://resy.com/cities/san-francisco-ca?date=2026-08-02&seats=2";
+const PROBE_URL = process.env.BOOKING_PROBE_URL ?? DEFAULT_PROBE_URL;
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -43,10 +44,14 @@ async function findBox() {
 /**
  * Ask the site whether it still knows who we are.
  *
- * Resy renders a "Log in" control only when signed out, so its ABSENCE after a
- * real page load is the signal. `--discover` exists because the positive
- * marker (account menu) can only be named once a real session exists -- run it
- * right after logging in and it will print the selector to pin here.
+ * Delegates to session-check.mjs, which waits for the page to actually render
+ * before believing anything. An earlier version here slept a fixed 7s and then
+ * counted the logged-out control -- which reports a pass for any page that
+ * simply had not finished loading, and would have let (b), (c) and (d) all
+ * "pass" against a profile holding no session at all.
+ *
+ * "unknown" is deliberately NOT a pass. Absence of a login control is not proof
+ * of a session.
  */
 async function isAuthenticated(context, oracle) {
   if (oracle.startsWith("cookie:")) {
@@ -55,15 +60,8 @@ async function isAuthenticated(context, oracle) {
     return { ok: cookies.some((c) => c.name === name), detail: `cookie ${name}` };
   }
 
-  const page = await context.newPage();
-  try {
-    await page.goto(PROBE_URL, { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await page.waitForTimeout(7000);
-    const loginCount = await page.locator('[data-test-id="menu_container-button-log_in"]').count();
-    return { ok: loginCount === 0, detail: `resy log_in control count=${loginCount}` };
-  } finally {
-    await page.close().catch(() => {});
-  }
+  const { state, detail } = await checkSession(context, { probeUrl: PROBE_URL });
+  return { ok: state === "authenticated", detail: `${state}: ${detail}` };
 }
 
 async function withBrowser(fn) {
