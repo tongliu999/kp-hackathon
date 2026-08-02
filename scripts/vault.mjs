@@ -21,13 +21,13 @@ import { readFileSync, writeFileSync, unlinkSync, statSync } from "node:fs";
 import { loadKey } from "../src/vault/keyring.js";
 import {
   loadVault, saveVault, defaultVaultPath, putSession, removeSession,
-  listSessions, selectSession, getCapability, putCapability,
+  listSessions, selectSession, getCapability, putCapability, recordProbe,
 } from "../src/vault/vault.js";
 import { parseCookieText, normalizeCookie } from "../src/vault/cookie_formats.js";
 import { normalizeDomain, cookiesForDomain } from "../src/vault/domains.js";
 import { summarizeCookies, secretValues, guardedPrinter } from "../src/vault/redact.js";
-import { markersFor, probeUrlFor, describeCapability } from "../src/vault/capabilities.js";
-import { probeDomain, hostTransport, sailboxTransport, KNOWN_REFRESH_URLS } from "../src/vault/probe.js";
+import { markersFor, probeUrlFor, describeCapability, refreshUrlFor } from "../src/vault/capabilities.js";
+import { probeDomain, hostTransport, sailboxTransport } from "../src/vault/probe.js";
 import { installSession, explainFailure } from "../src/vault/install.js";
 import { createAccount, SIGNUP_NOT_VIABLE } from "../src/vault/signup.js";
 import { describeRemaining } from "../src/vault/expiry.js";
@@ -250,14 +250,30 @@ const COMMANDS = {
         box: sailboxTransport(box),
         host: hostTransport(),
       });
-      const refresh = KNOWN_REFRESH_URLS[normalizeDomain(domain)] ?? null;
-      putCapability(data, domain, { ...patch, refresh: refresh ? { endpoint: refresh, observed: false } : null });
+      const refresh = refreshUrlFor(domain, getCapability(data, domain));
+      const asAuthEndpoint = has("as-auth-endpoint");
+      const recorded = recordProbe(
+        data,
+        domain,
+        { ...patch, refresh: refresh ? { endpoint: refresh, observed: false } : null },
+        { asAuthEndpoint }
+      );
       await save();
 
       print(`probe ${patch.authUrl}`);
       print(`  box   ${JSON.stringify(patch.evidence.box)}`);
       print(`  host  ${JSON.stringify(patch.evidence.host)}`);
+      if (patch.clients && !patch.clients.matched) {
+        print(`  note  the two sides ran different curl builds (box: ${patch.clients.box}, host: ${patch.clients.host})`);
+      }
       print(`\n${patch.verdict}: ${patch.summary}`);
+      if (recorded.authUrl !== patch.authUrl) {
+        print(
+          `\nRecorded against ${patch.authUrl} only. ${normalizeDomain(domain)}'s auth verdict ` +
+            `(${recorded.verdict ?? "unprobed"}, from ${recorded.authUrl}) is left alone — probing another ` +
+            "endpoint says nothing about the auth path. Pass --as-auth-endpoint to change which endpoint that is."
+        );
+      }
       if (patch.needsTunnel) {
         print(
           "\nThe box needs residential egress for auth on this domain:\n" +
@@ -303,8 +319,11 @@ const COMMANDS = {
         print(`${d}`);
         print(`  auth      ${describeCapability(capability)}`);
         print(`  probed    ${capability.probedAt ?? "never"}${capability.authUrl ? ` (${capability.authUrl})` : ""}`);
-        print(`  refresh   ${capability.refresh?.endpoint ?? "unknown"}`);
+        print(`  refresh   ${capability.refresh?.endpoint ?? refreshUrlFor(d, capability) ?? "unknown"}`);
         print(`  signed-in ${markers.signedIn ?? "NOT RECORDED — cannot report authenticated for this domain"}`);
+        for (const [url, probe] of Object.entries(capability.endpointProbes ?? {})) {
+          print(`  also      ${url} — ${probe.verdict}`);
+        }
       }
     });
   },

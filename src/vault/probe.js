@@ -12,21 +12,8 @@
 // be indistinguishable from a difference between the networks, and the whole
 // diagnostic would be worthless.
 
-import { classifyProbe } from "./capabilities.js";
+import { classifyProbe, KNOWN_AUTH_URLS } from "./capabilities.js";
 import { normalizeDomain, assertUrlBelongsTo } from "./domains.js";
-
-/**
- * Auth endpoints already measured. Anything not listed must be passed with
- * --auth-url: guessing an endpoint and probing the wrong one produces a
- * confident, wrong capability record.
- */
-export const KNOWN_AUTH_URLS = {
-  "resy.com": "https://api.resy.com/4/auth/mobile",
-};
-
-export const KNOWN_REFRESH_URLS = {
-  "resy.com": "https://api.resy.com/3/auth/refresh",
-};
 
 /**
  * A CORS preflight, which is what a browser actually sends before a login POST
@@ -76,46 +63,68 @@ export function curlCommand(request, { timeoutSeconds = 20 } = {}) {
   return `curl -sS -o /dev/null -D - -X ${request.method} ${headers} --max-time ${timeoutSeconds} ${shellQuote(request.url)}`;
 }
 
-/** Host transport: this machine's own egress, i.e. residential. */
-export function hostTransport({ fetchImpl = fetch } = {}) {
+/**
+ * Both sides run curl, driven by the SAME command string. Only the machine it
+ * runs on differs.
+ *
+ * This is not fussiness. The host side originally used Node's fetch while the
+ * box side used curl, and against the very endpoint this tool exists to
+ * diagnose the two disagree: identical URL, identical explicit headers,
+ *
+ *     curl        -> 204
+ *     node fetch  -> 500
+ *
+ * because undici's default headers and TLS fingerprint are not a browser's or
+ * curl's. A client difference of that size is indistinguishable from an egress
+ * difference in the comparison, which would make the probe confidently report
+ * "blocked from the box" for two clients that were never the same request.
+ */
+function curlTransport(name, exec) {
   return {
-    name: "host",
+    name,
     async send(request) {
       try {
-        const response = await fetchImpl(request.url, {
-          method: request.method,
-          headers: request.headers,
-          redirect: "manual",
-        });
-        return {
-          status: response.status,
-          corsAllowOrigin: response.headers.get("access-control-allow-origin"),
-          error: null,
-        };
-      } catch (error) {
-        return { status: null, corsAllowOrigin: null, error: error.message };
-      }
-    },
-  };
-}
-
-/** Box transport: curl inside the Sailbox, so the request leaves Sail's egress. */
-export function sailboxTransport(box) {
-  return {
-    name: "box",
-    async send(request) {
-      try {
-        const result = await box.run(curlCommand(request), { timeout: 60_000 });
-        const parsed = parseCurlHead(result.stdout);
-        if (parsed.status == null && result.stderr) {
-          return { status: null, corsAllowOrigin: null, error: String(result.stderr).trim().slice(0, 200) };
+        const { stdout, stderr } = await exec(curlCommand(request));
+        const parsed = parseCurlHead(stdout);
+        if (parsed.status == null && stderr) {
+          return { status: null, corsAllowOrigin: null, error: String(stderr).trim().slice(0, 200) };
         }
         return parsed;
       } catch (error) {
         return { status: null, corsAllowOrigin: null, error: error.message };
       }
     },
+    async clientVersion() {
+      try {
+        const { stdout } = await exec("curl --version");
+        return String(stdout).split("\n")[0].trim();
+      } catch {
+        return null;
+      }
+    },
   };
+}
+
+async function localExec(command) {
+  const { exec } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  return promisify(exec)(command, { timeout: 60_000, maxBuffer: 1 << 20 }).catch((error) => ({
+    stdout: error.stdout ?? "",
+    stderr: error.stderr ?? error.message,
+  }));
+}
+
+/** Host transport: this machine's own egress, i.e. residential. */
+export function hostTransport({ exec = localExec } = {}) {
+  return curlTransport("host", exec);
+}
+
+/** Box transport: the same curl, inside the Sailbox, so it leaves Sail's egress. */
+export function sailboxTransport(box) {
+  return curlTransport("box", async (command) => {
+    const result = await box.run(command, { timeout: 60_000 });
+    return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  });
 }
 
 /**
@@ -148,6 +157,14 @@ export async function probeDomain(domain, { authUrl, origin, box, host, now = ne
 
   const verdict = classifyProbe({ box: boxResponse, host: hostResponse });
 
+  // The comparison is only meaningful if both sides ran the same client. They
+  // are the same program by construction, but not necessarily the same build,
+  // so record both and let a mismatch be visible instead of silent.
+  const [boxClient, hostClient] = await Promise.all([
+    box.clientVersion?.() ?? null,
+    host.clientVersion?.() ?? null,
+  ]);
+
   return {
     probedAt: now.toISOString(),
     authUrl: url,
@@ -155,6 +172,7 @@ export async function probeDomain(domain, { authUrl, origin, box, host, now = ne
     needsTunnel: verdict.needsTunnel,
     summary: verdict.summary,
     browserInvisible: verdict.browserInvisible ?? false,
+    clients: { box: boxClient, host: hostClient, matched: boxClient === hostClient },
     evidence: { box: boxResponse, host: hostResponse, request: { url, method: request.method } },
   };
 }

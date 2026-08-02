@@ -435,3 +435,26 @@ component in the path. Tests use a recording booking adapter and a fake-only
 confirmation ID; they never perform a network request or booking. See
 [`docs/m1-live-proof.md`](docs/m1-live-proof.md) for the fail-closed live handoff
 and outstanding TON-11/TON-12 operational requirements.
+
+## Session vault
+
+Authenticated sessions for many sites at once, encrypted at rest, keyed by
+domain with several labels per domain so a burned account does not block a
+demo. See [`docs/session-vault.md`](docs/session-vault.md).
+
+```
+node scripts/vault.mjs add cookies.json --domain resy.com --label tong --forget
+node scripts/vault.mjs list
+node scripts/vault.mjs import resy.com
+```
+
+Three findings are baked into it, because each one cost hours: being able to
+read a site does not mean you can log into it (bot vendors guard auth endpoints
+far harder than content, and from a browser the block is indistinguishable from
+a CORS misconfiguration); a session is a cookie *plus* the right to refresh it;
+and "no login button" is also what an unhydrated page looks like, so the auth
+check requires positive evidence and answers `unknown` rather than guessing.
+
+`vault probe <domain>` sends the same request from the Sailbox and from your
+machine and compares them — the only diagnostic that separates "this egress is
+blocked" from "this request is wrong".

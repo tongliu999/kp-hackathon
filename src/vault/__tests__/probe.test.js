@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { classifyProbe } from "../capabilities.js";
 import {
-  buildPreflight, parseCurlHead, curlCommand, probeDomain, classifyRefreshRequests, hostTransport,
+  buildPreflight, parseCurlHead, curlCommand, probeDomain, classifyRefreshRequests, hostTransport, sailboxTransport,
 } from "../probe.js";
 import { fakeTransport } from "./fakes.js";
 
@@ -161,8 +161,41 @@ test("refresh detection names the endpoint that keeps a session alive", () => {
 });
 
 test("the host transport reports a network failure instead of throwing", async () => {
-  const transport = hostTransport({ fetchImpl: async () => { throw new Error("getaddrinfo ENOTFOUND"); } });
+  const transport = hostTransport({ exec: async () => { throw new Error("getaddrinfo ENOTFOUND"); } });
   assert.deepEqual(await transport.send(buildPreflight({ url: "https://api.resy.com/x", origin: "https://resy.com" })), {
     status: null, corsAllowOrigin: null, error: "getaddrinfo ENOTFOUND",
   });
+});
+
+// The invariant the whole diagnostic rests on. It was violated once: the host
+// side used Node's fetch and the box side used curl, and against Resy's auth
+// endpoint those two clients disagree 204 vs 500 on an identical request. A
+// client difference that size reads as an egress difference.
+test("host and box run the byte-identical command, differing only in where it runs", async () => {
+  const commands = [];
+  const record = async (command) => {
+    commands.push(command);
+    return { stdout: "HTTP/2 204\r\naccess-control-allow-origin: https://resy.com\r\n", stderr: "" };
+  };
+  const fakeBox = { async run(command) { return record(command); } };
+
+  await probeDomain("resy.com", { host: hostTransport({ exec: record }), box: sailboxTransport(fakeBox) });
+
+  const sends = commands.filter((c) => c !== "curl --version");
+  assert.equal(sends.length, 2);
+  assert.equal(sends[0], sends[1], "both sides must issue the same curl command");
+});
+
+test("a curl version mismatch between the two sides is recorded, not hidden", async () => {
+  const respond = (version) => async (command) =>
+    command === "curl --version"
+      ? { stdout: `${version}\n(extra line)`, stderr: "" }
+      : { stdout: "HTTP/2 204\r\n", stderr: "" };
+  const fakeBox = { async run(command) { return respond("curl 7.68.0")(command); } };
+
+  const patch = await probeDomain("resy.com", {
+    host: hostTransport({ exec: respond("curl 8.7.1") }),
+    box: sailboxTransport(fakeBox),
+  });
+  assert.deepEqual(patch.clients, { box: "curl 7.68.0", host: "curl 8.7.1", matched: false });
 });

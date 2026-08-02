@@ -135,6 +135,32 @@ export const KNOWN_MARKERS = {
 };
 
 /**
+ * Auth endpoints already measured. Anything not listed must be passed with
+ * --auth-url: guessing an endpoint and probing the wrong one records a
+ * confident, wrong capability.
+ */
+export const KNOWN_AUTH_URLS = {
+  "resy.com": "https://api.resy.com/4/auth/mobile",
+};
+
+/**
+ * Where a session is refreshed. Tracked separately from the auth endpoint
+ * because reaching one does not imply reaching the other, and it is the refresh
+ * endpoint that decides whether an imported session ever activates.
+ */
+export const KNOWN_REFRESH_URLS = {
+  "resy.com": "https://api.resy.com/3/auth/refresh",
+};
+
+export function authUrlFor(domain, capability) {
+  return capability?.authUrl ?? KNOWN_AUTH_URLS[normalizeDomain(domain)] ?? null;
+}
+
+export function refreshUrlFor(domain, capability) {
+  return capability?.refresh?.endpoint ?? KNOWN_REFRESH_URLS[normalizeDomain(domain)] ?? null;
+}
+
+/**
  * A page on the domain that renders the markers. Needs to be a real content
  * page: a bare origin often redirects or serves a marketing shell that renders
  * neither marker, which reads as "unknown" forever.

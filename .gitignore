@@ -30,3 +30,10 @@ demo/bookings.json
 # Live branching-search output. fixtures/trajectories/ holds the locked
 # hand-written examples; real runs must not be mixed into them.
 runs/
+
+# Session exports and vaults never belong in the tree. The vault itself refuses
+# to be written here (src/vault/vault.js assertOutsideRepo); this is the second line.
+*.enc.json
+cookies*.json
+cookies*.txt
+storageState*.json

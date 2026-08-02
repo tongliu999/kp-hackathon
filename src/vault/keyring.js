@@ -43,32 +43,57 @@ function run(command, args, stdin) {
  * macOS keychain backend.
  *
  * The key is written over stdin, never as an argv element: `security
- * add-generic-password -w <secret>` would put the vault key in `ps` output for
- * every user on the machine. Trailing bare `-w` makes it prompt, which reads
- * the pipe.
+ * add-generic-password -w <key>` would put the vault key in `ps` output for
+ * every user on the machine. `security -i` reads its command from stdin, which
+ * keeps the key out of argv while still allowing an explicit target keychain.
+ *
+ * Bare trailing `-w` (the documented "prompt for it" form) is NOT usable here:
+ * with a keychain path given, `security` consumes the path as the password and
+ * silently writes the item to the LOGIN keychain instead. Measured, not assumed.
  */
-export function securityKeychain({ account = "default", keychainPath = process.env.KP_VAULT_KEYCHAIN } = {}) {
+export function securityKeychain({
+  account = "default",
+  keychainPath = process.env.KP_VAULT_KEYCHAIN,
+  service = KEYCHAIN_SERVICE,
+} = {}) {
   const where = keychainPath ? [keychainPath] : [];
+
+  async function read() {
+    const { code, stdout } = await run("security", [
+      "find-generic-password", "-s", service, "-a", account, "-w", ...where,
+    ]);
+    if (code !== 0) return null; // includes NOT_FOUND_EXIT
+    return stdout.trim() || null;
+  }
+
   return {
     name: keychainPath ? `keychain ${keychainPath}` : "macOS login keychain",
-    async read() {
-      const { code, stdout } = await run("security", [
-        "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w", ...where,
-      ]);
-      if (code === NOT_FOUND_EXIT) return null;
-      if (code !== 0) return null;
-      return stdout.trim() || null;
-    },
+    read,
     async write(keyB64) {
-      const { code, stderr } = await run(
-        "security",
-        ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-U", ...where, "-w"],
-        keyB64
-      );
-      if (code !== 0) throw new Error(`could not store the vault key in the keychain: ${stderr.trim()}`);
+      // Interpolated into a quoted string below, so it must be base64 and
+      // nothing else. Anything able to carry a quote could rewrite the command.
+      if (!/^[A-Za-z0-9+/=]+$/.test(keyB64)) throw new Error("refusing to store a non-base64 vault key");
+      const target = keychainPath ? ` "${keychainPath}"` : "";
+      const command = `add-generic-password -s ${service} -a ${account} -U -w "${keyB64}"${target}\n`;
+      const { code, stdout, stderr } = await run("security", ["-i"], command);
+      const output = `${stdout}${stderr}`.trim();
+      // `security -i` reports some failures in its output while still exiting 0,
+      // so a clean exit code alone is not evidence the key was stored.
+      if (code !== 0 || /error|Usage:/i.test(output)) {
+        throw new Error(`could not store the vault key in the keychain: ${output || `exit ${code}`}`);
+      }
+      // Read back before trusting it. The earlier bug wrote the key somewhere
+      // else entirely and still looked like a success.
+      if ((await read()) !== keyB64) {
+        throw new Error(
+          "the vault key did not survive the keychain write — refusing to continue with a key that cannot be read back"
+        );
+      }
     },
   };
 }
+
+export { NOT_FOUND_EXIT };
 
 /**
  * @returns {Promise<{key: Buffer, source: string}>}
