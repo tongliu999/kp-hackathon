@@ -32,6 +32,15 @@ from .runbooks import (
     substitute_slots,
 )
 from .voice import LatencyReport, VoiceEchoLoop
+from .warm_replay import (
+    ReplayExecutor,
+    RunbookRepository,
+    SynthesisOutcome,
+    SynthesisStatus,
+    WarmReplayJoin,
+    WarmReplayOutcome,
+    WarmReplayStatus,
+)
 
 __version__ = "0.1.0"
 
@@ -51,6 +60,7 @@ __all__ = [
     "Runbook",
     "RunbookExecutor",
     "RunbookMatcher",
+    "RunbookRepository",
     "RunbookSchemaError",
     "RunbookSerializable",
     "RunbookStep",
@@ -61,9 +71,15 @@ __all__ = [
     "SlotDefinition",
     "SlotResolutionError",
     "SlotType",
+    "SynthesisOutcome",
+    "SynthesisStatus",
     "StepResult",
     "StepStatus",
     "VoiceEchoLoop",
+    "WarmReplayJoin",
+    "WarmReplayOutcome",
+    "WarmReplayStatus",
     "__version__",
+    "ReplayExecutor",
     "substitute_slots",
 ]
