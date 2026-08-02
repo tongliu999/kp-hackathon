@@ -17,6 +17,11 @@ voice = [
 sailbox = [
   "sail>=0.5.6,<1",
 ]
+# The judge reaches Sail through its Anthropic-compatible Messages endpoint, so it
+# needs the Anthropic SDK but not `sail` itself.
+judge = [
+  "anthropic>=0.40,<1",
+]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
@@ -31,6 +36,7 @@ dev = [
 runbook-branch-search-demo = "runbook_voice.branch_search_demo:main"
 runbook-cold-task-demo = "runbook_voice.cold_task_demo:main"
 runbook-distill = "runbook_voice.distiller:main"
+runbook-judge-check = "runbook_voice.judge_check:main"
 runbook-sailbox-demo = "runbook_voice.sailbox_demo:main"
 runbook-voice-echo = "runbook_voice.voice_loop:main"
 

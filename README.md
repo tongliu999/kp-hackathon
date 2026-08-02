@@ -285,6 +285,67 @@ Output lands in `runs/<job_id>/` (gitignored). It is deliberately not
 `fixtures/trajectories/`, which holds the locked hand-written examples that
 `schema/validate.py` checks.
 
+## Pairwise judge (TON-19)
+
+`PairwiseJudge` takes the trajectories a fan-out produced and names a winner in one
+model call, with one line saying what decided it.
+
+```python
+from runbook_voice import PairwiseJudge, SailJudgeModel
+
+verdict = PairwiseJudge(SailJudgeModel()).pick([t0, t1, t2])
+verdict.winner   # "b0"
+verdict.reason   # "b0 found an exact 7:00 PM slot ... while b1 settled for 8:30 PM"
+```
+
+Input is whatever [`schema/trajectory.schema.json`](schema/trajectory.schema.json)
+describes, as plain mappings — there is no second Python definition of that schema to
+drift away from it.
+
+Scope is fixed: **one comparison call**, no tournament, no second opinion, no absolute
+scoring, no benchmark. Branch-and-prune is only as good as the score it prunes on, and a
+noisy judge is worse than no pruning — you discard the best branch confidently and then
+present a loser. Containing that means keeping the judge small, not making it clever.
+
+Two things carry the weight:
+
+- **Whole trajectories go in, not final answers.** `steps[].outcome` separates `ok` /
+  `error` / `abandoned`, and the abandoned ones are most of what distinguishes two
+  branches that both claim success.
+- **`success_signal` is explicitly distrusted.** It is the branch's own claim about
+  itself. Fixture `b1` reports success while booking 8:30 PM instead of 7:00 — the exact
+  case a naive scorer gets wrong.
+
+The winner is constrained to an enum of the supplied `branch_id`s, so inventing a branch
+is a schema violation rather than a wrong answer. A verdict that restates the winner
+instead of justifying it is rejected: observed once in five live runs, and it removes the
+one signal you have for spotting a judge that is coin-flipping.
+
+### Checking it is not picking at random
+
+```bash
+runbook-judge-check --runs 5 --expect b0
+```
+
+The recorded fixtures rank b0 > b1 > b2 deliberately. Both the winners and the reasons
+are printed, and the command exits non-zero unless the runs agree.
+
+Measured 2026-08-01 on `moonshotai/Kimi-K2.6`, effort `high`: **5/5 b0 at temperature 0,
+and 5/5 b0 again at temperature 1.0.**
+
+If it ever comes out inconsistent, the documented fallback is
+`longest_successful_branch` — worse, but honest, and it keeps the demo alive. Know what
+it costs: on these fixtures it picks **b1**, because b1 self-reports success and has one
+more step than b0. That is the naive scoring the judge exists to beat, which is why it is
+a separate function you reach for deliberately rather than an automatic degradation.
+
+### Backend
+
+The judge uses the Anthropic SDK pointed at Sail's Anthropic-compatible Messages
+endpoint. **Sail serves open-weight models, so this is not Claude** — the default is
+`moonshotai/Kimi-K2.6`. Credentials come from `SAIL_API_KEY`, falling back to
+`~/.sail/auth.toml` written by `sail auth login`. Install with
+`pip install -e '.[judge]'`.
 
 ## Demo operations
 
